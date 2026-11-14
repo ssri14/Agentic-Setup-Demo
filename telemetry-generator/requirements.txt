@@ -1,0 +1,5 @@
+# generate.py and validate.py
+numpy>=1.26
+PyYAML>=6.0
+# validation/build_handoff.py only (QC plots)
+matplotlib>=3.8

@@ -1,0 +1,377 @@
+{
+  "version": "1.1.0-rc1",
+  "metadata_columns": [
+    "run_id",
+    "sample_index",
+    "mission_elapsed_s",
+    "source_time_utc",
+    "received_time_utc",
+    "delivery_state"
+  ],
+  "channels": [
+    {
+      "id": "act_fault",
+      "owner": "ACT",
+      "storage_type": "boolean",
+      "source_reference": "Mission Document SEC-04"
+    },
+    {
+      "id": "act_response_lag_ms",
+      "owner": "ACT",
+      "storage_type": "float",
+      "source_reference": "Mission Document SEC-04"
+    },
+    {
+      "id": "act_state",
+      "owner": "ACT",
+      "storage_type": "string",
+      "source_reference": "Mission Document SEC-04",
+      "allowed_values": [
+        "ACTIVE",
+        "DEGRADED",
+        "IDLE",
+        "UNKNOWN"
+      ]
+    },
+    {
+      "id": "cfg_integrity_ok",
+      "owner": "CFG",
+      "storage_type": "boolean",
+      "source_reference": "Mission Document SEC-04"
+    },
+    {
+      "id": "cfg_profile_id",
+      "owner": "CFG",
+      "storage_type": "string",
+      "source_reference": "Mission Document SEC-04",
+      "allowed_values": [
+        "PROFILE-A",
+        "PROFILE-B"
+      ]
+    },
+    {
+      "id": "cfg_revision_id",
+      "owner": "CFG",
+      "storage_type": "string",
+      "source_reference": "Mission Document SEC-04"
+    },
+    {
+      "id": "clk_lock_state",
+      "owner": "CLK",
+      "storage_type": "string",
+      "source_reference": "Mission Document SEC-04",
+      "allowed_values": [
+        "HOLDOVER",
+        "LOCKED",
+        "UNLOCKED"
+      ]
+    },
+    {
+      "id": "clk_offset_ms",
+      "owner": "CLK",
+      "storage_type": "float",
+      "source_reference": "Mission Document SEC-04"
+    },
+    {
+      "id": "clk_resync_count",
+      "owner": "CLK",
+      "storage_type": "integer",
+      "source_reference": "Mission Document SEC-04"
+    },
+    {
+      "id": "com_gap_s",
+      "owner": "COM",
+      "storage_type": "float",
+      "source_reference": "Mission Document SEC-04"
+    },
+    {
+      "id": "com_latency_ms",
+      "owner": "COM",
+      "storage_type": "float",
+      "source_reference": "Mission Document SEC-04"
+    },
+    {
+      "id": "com_link_state",
+      "owner": "COM",
+      "storage_type": "string",
+      "source_reference": "Mission Document SEC-04",
+      "allowed_values": [
+        "CONNECTED",
+        "DEGRADED",
+        "DISCONNECTED"
+      ]
+    },
+    {
+      "id": "com_loss_pct",
+      "owner": "COM",
+      "storage_type": "float",
+      "source_reference": "Mission Document SEC-04"
+    },
+    {
+      "id": "daq_buffer_pct",
+      "owner": "DAQ",
+      "storage_type": "float",
+      "source_reference": "Mission Document SEC-04"
+    },
+    {
+      "id": "daq_missing_samples",
+      "owner": "DAQ",
+      "storage_type": "integer",
+      "source_reference": "Mission Document SEC-04"
+    },
+    {
+      "id": "daq_quality_pu",
+      "owner": "DAQ",
+      "storage_type": "float",
+      "source_reference": "Mission Document SEC-04"
+    },
+    {
+      "id": "daq_rate_hz",
+      "owner": "DAQ",
+      "storage_type": "float",
+      "source_reference": "Mission Document SEC-04"
+    },
+    {
+      "id": "env_pressure_pu",
+      "owner": "ENV",
+      "storage_type": "float",
+      "source_reference": "Mission Document SEC-04"
+    },
+    {
+      "id": "env_temp_pu",
+      "owner": "ENV",
+      "storage_type": "float",
+      "source_reference": "Mission Document SEC-04"
+    },
+    {
+      "id": "env_vibration_pu",
+      "owner": "ENV",
+      "storage_type": "float",
+      "source_reference": "Mission Document SEC-04"
+    },
+    {
+      "id": "hlt_degraded",
+      "owner": "HLT",
+      "storage_type": "boolean",
+      "source_reference": "Mission Document SEC-04"
+    },
+    {
+      "id": "hlt_overall_state",
+      "owner": "HLT",
+      "storage_type": "string",
+      "source_reference": "Mission Document SEC-04",
+      "allowed_values": [
+        "DEGRADED",
+        "NOMINAL",
+        "UNKNOWN",
+        "WARNING"
+      ]
+    },
+    {
+      "id": "hlt_warning_count",
+      "owner": "HLT",
+      "storage_type": "integer",
+      "source_reference": "Mission Document SEC-04"
+    },
+    {
+      "id": "log_backlog",
+      "owner": "LOG",
+      "storage_type": "integer",
+      "source_reference": "Mission Document SEC-04"
+    },
+    {
+      "id": "log_integrity_ok",
+      "owner": "LOG",
+      "storage_type": "boolean",
+      "source_reference": "Mission Document SEC-04"
+    },
+    {
+      "id": "log_seq",
+      "owner": "LOG",
+      "storage_type": "integer",
+      "source_reference": "Mission Document SEC-04"
+    },
+    {
+      "id": "pwr_bus_level_pu",
+      "owner": "PWR",
+      "storage_type": "float",
+      "source_reference": "Mission Document SEC-04"
+    },
+    {
+      "id": "pwr_fault",
+      "owner": "PWR",
+      "storage_type": "boolean",
+      "source_reference": "Mission Document SEC-04"
+    },
+    {
+      "id": "pwr_load_pu",
+      "owner": "PWR",
+      "storage_type": "float",
+      "source_reference": "Mission Document SEC-04"
+    },
+    {
+      "id": "pwr_margin_pu",
+      "owner": "PWR",
+      "storage_type": "float",
+      "source_reference": "Mission Document SEC-04"
+    },
+    {
+      "id": "saf_event_count",
+      "owner": "SAF",
+      "storage_type": "integer",
+      "source_reference": "Mission Document SEC-04"
+    },
+    {
+      "id": "saf_interlock_ok",
+      "owner": "SAF",
+      "storage_type": "boolean",
+      "source_reference": "Mission Document SEC-04"
+    },
+    {
+      "id": "saf_state",
+      "owner": "SAF",
+      "storage_type": "string",
+      "source_reference": "Mission Document SEC-04",
+      "allowed_values": [
+        "CHECKING",
+        "MONITORING",
+        "READY",
+        "SAFE",
+        "UNKNOWN"
+      ]
+    },
+    {
+      "id": "seq_delay_s",
+      "owner": "SEQ",
+      "storage_type": "float",
+      "source_reference": "Mission Document SEC-04"
+    },
+    {
+      "id": "seq_pending",
+      "owner": "SEQ",
+      "storage_type": "boolean",
+      "source_reference": "Mission Document SEC-04"
+    },
+    {
+      "id": "seq_phase_id",
+      "owner": "SEQ",
+      "storage_type": "string",
+      "source_reference": "Mission Document SEC-04",
+      "allowed_values": [
+        "P0",
+        "P1",
+        "P2",
+        "P3",
+        "P4",
+        "P5",
+        "P6"
+      ]
+    },
+    {
+      "id": "seq_subphase_id",
+      "owner": "SEQ",
+      "storage_type": "string",
+      "source_reference": "Mission Document SEC-04",
+      "allowed_values": [
+        "P0A",
+        "P0B",
+        "P1A",
+        "P1B",
+        "P2A",
+        "P2B",
+        "P3A",
+        "P3B",
+        "P4A",
+        "P4B",
+        "P5A",
+        "P5B",
+        "P6A",
+        "P6B"
+      ]
+    },
+    {
+      "id": "stg_ack_age_s",
+      "owner": "STG",
+      "storage_type": "float",
+      "source_reference": "Mission Document SEC-04"
+    },
+    {
+      "id": "stg_event",
+      "owner": "STG",
+      "storage_type": "boolean",
+      "source_reference": "Mission Document SEC-04"
+    },
+    {
+      "id": "stg_state",
+      "owner": "STG",
+      "storage_type": "string",
+      "source_reference": "Mission Document SEC-04",
+      "allowed_values": [
+        "CONFIRMED",
+        "NOT_APPLICABLE",
+        "PENDING",
+        "UNKNOWN"
+      ]
+    },
+    {
+      "id": "sup_fault_count",
+      "owner": "SUP",
+      "storage_type": "integer",
+      "source_reference": "Mission Document SEC-04"
+    },
+    {
+      "id": "sup_heartbeat_age_s",
+      "owner": "SUP",
+      "storage_type": "float",
+      "source_reference": "Mission Document SEC-04"
+    },
+    {
+      "id": "sup_mode",
+      "owner": "SUP",
+      "storage_type": "string",
+      "source_reference": "Mission Document SEC-04",
+      "allowed_values": [
+        "CAUTION",
+        "NORMAL",
+        "RECOVERY"
+      ]
+    },
+    {
+      "id": "sup_state",
+      "owner": "SUP",
+      "storage_type": "string",
+      "source_reference": "Mission Document SEC-04",
+      "allowed_values": [
+        "ACTIVE",
+        "ARCHIVED",
+        "IDLE",
+        "READY",
+        "SAFE"
+      ]
+    },
+    {
+      "id": "thm_core_temp_pu",
+      "owner": "THM",
+      "storage_type": "float",
+      "source_reference": "Mission Document SEC-04"
+    },
+    {
+      "id": "thm_delta_pu",
+      "owner": "THM",
+      "storage_type": "float",
+      "source_reference": "Mission Document SEC-04"
+    },
+    {
+      "id": "thm_payload_temp_pu",
+      "owner": "THM",
+      "storage_type": "float",
+      "source_reference": "Mission Document SEC-04"
+    },
+    {
+      "id": "thm_warning",
+      "owner": "THM",
+      "storage_type": "boolean",
+      "source_reference": "Mission Document SEC-04"
+    }
+  ]
+}

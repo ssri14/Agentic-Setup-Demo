@@ -1,0 +1,6 @@
+# Generated output. agent_visible/ is what a mission ingests; evaluator_only/ holds the answers and is never committed.
+agent_visible/
+evaluator_only/
+validation/validation_report.json
+validation/qa_previews/
+SHA256SUMS.txt

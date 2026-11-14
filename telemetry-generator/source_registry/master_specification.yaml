@@ -1,0 +1,2451 @@
+spec_id: BRAHMASTRA-FICTIONAL-MULTIMODAL
+version: 1.1.0-rc1
+status: REVIEW_CANDIDATE_NOT_APPROVED
+provenance:
+  basis: Approved conversation design and local provisional v1.1.2 comparison
+  original_deep_research_files_recovered: false
+  authoritative_only_after_approval: true
+safety_scope:
+  mode: fictional_non_operational_aerospace_digital_twin
+  out_of_scope:
+  - weapon guidance
+  - targeting
+  - propulsion design
+  - destructive mechanisms
+  - real mission effectiveness
+targets:
+  subsystems: 14
+  channels: 48
+  major_phases: 7
+  subphases: 14
+  figures: 12
+  scenarios: 8
+  scenario_runs: 24
+  benchmarks: 34
+  document_pages_min: 22
+  document_pages_max: 30
+  sampling_hz: 2
+  duration_s: 900
+simulation:
+  clock_epoch: 2026-01-01T00:00:00Z (fictional)
+  timestamp_model:
+    sample_time_field: source_time_utc
+    delivery_time_field: received_time_utc
+    sample_interval_ms: 500
+    rows_per_run: 1800
+    nominal_interval_s: '[0,900) (half-open)'
+    clock_corrections: explicit events, never silently reorder source time
+  reproducibility:
+    seed_strategy: one deterministic integer seed per run
+    canonical_order: channel ID order
+    expected_behavior: same spec+seed+scenario yields byte-identical source rows
+  data_separation:
+    agent_visible:
+    - document
+    - figures
+    - telemetry
+    - events
+    - public_run_manifest
+    private:
+    - ground_truth
+    - reference_answers
+    - injection_config
+    - hidden_truth_manifest
+document_sections:
+- id: SEC-01
+  title: Purpose, exclusions, simulation provenance
+- id: SEC-02
+  title: System overview and component relationships
+- id: SEC-03
+  title: Subsystem reference
+- id: SEC-04
+  title: Telemetry channel dictionary
+- id: SEC-05
+  title: Mission state machine
+- id: SEC-06
+  title: Consistency and observability rules
+- id: SEC-07
+  title: Event time, source time, and delivery time
+- id: SEC-08
+  title: Synthetic scenario definitions
+- id: SEC-09
+  title: Figure catalogue and source references
+- id: SEC-10
+  title: Data products and quality validation
+- id: SEC-11
+  title: Agentic benchmark and evidence contracts
+subsystems:
+- id: CFG
+  name: Configuration Management
+  purpose: Mission profile, revision tracking and configuration integrity
+  depends_on: []
+  doc_ref: SEC-03.CFG
+  model_kind: logical_observation_only
+- id: PWR
+  name: Power Monitoring
+  purpose: Normalized supply and load health indicators
+  depends_on:
+  - CFG
+  doc_ref: SEC-03.PWR
+  model_kind: logical_observation_only
+- id: THM
+  name: Thermal Monitoring
+  purpose: Synthetic component thermal-status indicators
+  depends_on:
+  - PWR
+  doc_ref: SEC-03.THM
+  model_kind: logical_observation_only
+- id: CLK
+  name: Time Synchronization
+  purpose: Timestamp alignment, lock state and correction logging
+  depends_on:
+  - PWR
+  doc_ref: SEC-03.CLK
+  model_kind: logical_observation_only
+- id: HLT
+  name: Health Aggregation
+  purpose: Collated warnings and degraded-health classifications
+  depends_on:
+  - PWR
+  - THM
+  - ENV
+  - ACT
+  doc_ref: SEC-03.HLT
+  model_kind: logical_observation_only
+- id: DAQ
+  name: Data Acquisition
+  purpose: Samples, sample quality, buffer continuity
+  depends_on:
+  - CLK
+  - PWR
+  doc_ref: SEC-03.DAQ
+  model_kind: logical_observation_only
+- id: COM
+  name: Communications Monitoring
+  purpose: Delivery quality, delayed packets and link status
+  depends_on:
+  - DAQ
+  - CLK
+  doc_ref: SEC-03.COM
+  model_kind: logical_observation_only
+- id: SUP
+  name: Mission Supervisor
+  purpose: Abstract supervisory state and heartbeat
+  depends_on:
+  - CFG
+  - HLT
+  - CLK
+  doc_ref: SEC-03.SUP
+  model_kind: logical_observation_only
+- id: SEQ
+  name: Phase Sequencer
+  purpose: Abstract mission phase and subphase bookkeeping
+  depends_on:
+  - SUP
+  - CFG
+  doc_ref: SEC-03.SEQ
+  model_kind: logical_observation_only
+- id: STG
+  name: Stage Event Monitor
+  purpose: Observes abstract stage-event status; no mechanism detail
+  depends_on:
+  - SEQ
+  - CLK
+  doc_ref: SEC-03.STG
+  model_kind: logical_observation_only
+- id: ENV
+  name: Environment Monitor
+  purpose: Normalized environmental sensor observations
+  depends_on:
+  - DAQ
+  doc_ref: SEC-03.ENV
+  model_kind: logical_observation_only
+- id: ACT
+  name: Actuator Status Monitor
+  purpose: Abstract component acknowledgment and status health
+  depends_on:
+  - PWR
+  - DAQ
+  doc_ref: SEC-03.ACT
+  model_kind: logical_observation_only
+- id: SAF
+  name: Safety State Monitor
+  purpose: Readiness/safe-state observations and interlocks
+  depends_on:
+  - HLT
+  - SUP
+  doc_ref: SEC-03.SAF
+  model_kind: logical_observation_only
+- id: LOG
+  name: Event Logger
+  purpose: Recorded events, sequence integrity, backlog
+  depends_on:
+  - CLK
+  - DAQ
+  - SEQ
+  - STG
+  doc_ref: SEC-03.LOG
+  model_kind: logical_observation_only
+channels:
+- id: cfg_profile_id
+  subsystem_id: CFG
+  type: enum
+  unit: symbol
+  domain:
+    kind: enum
+    values:
+    - PROFILE-A
+    - PROFILE-B
+  description: Configured fictional profile identifier
+  sample_hz: 2
+  missing_policy: nullable_with_quality_flags
+  nominal_model: PROFILE-A
+  doc_ref: SEC-04.cfg_profile_id
+  origin: synthetic_simulator
+  visibility: agent_visible
+- id: cfg_revision_id
+  subsystem_id: CFG
+  type: string
+  unit: revision
+  domain:
+    kind: regex
+    pattern: ^REV-[0-9]{3}$
+  description: Fictional configuration revision identifier
+  sample_hz: 2
+  missing_policy: nullable_with_quality_flags
+  nominal_model: REV-001
+  doc_ref: SEC-04.cfg_revision_id
+  origin: synthetic_simulator
+  visibility: agent_visible
+- id: cfg_integrity_ok
+  subsystem_id: CFG
+  type: boolean
+  unit: flag
+  domain:
+    kind: boolean
+  description: Configuration checksum status
+  sample_hz: 2
+  missing_policy: nullable_with_quality_flags
+  nominal_model: 'true'
+  doc_ref: SEC-04.cfg_integrity_ok
+  origin: synthetic_simulator
+  visibility: agent_visible
+- id: pwr_bus_level_pu
+  subsystem_id: PWR
+  type: float
+  unit: pu
+  domain:
+    kind: range
+    minimum: 0
+    maximum: 1
+  description: Normalized aggregate supply indicator
+  sample_hz: 2
+  missing_policy: nullable_with_quality_flags
+  nominal_model: stable:0.86
+  doc_ref: SEC-04.pwr_bus_level_pu
+  origin: synthetic_simulator
+  visibility: agent_visible
+- id: pwr_load_pu
+  subsystem_id: PWR
+  type: float
+  unit: pu
+  domain:
+    kind: range
+    minimum: 0
+    maximum: 1
+  description: Normalized aggregate load indicator
+  sample_hz: 2
+  missing_policy: nullable_with_quality_flags
+  nominal_model: stable:0.38
+  doc_ref: SEC-04.pwr_load_pu
+  origin: synthetic_simulator
+  visibility: agent_visible
+- id: pwr_margin_pu
+  subsystem_id: PWR
+  type: float
+  unit: pu
+  domain:
+    kind: range
+    minimum: 0
+    maximum: 1
+  description: Synthetic power health margin indicator
+  sample_hz: 2
+  missing_policy: nullable_with_quality_flags
+  nominal_model: stable:0.75
+  doc_ref: SEC-04.pwr_margin_pu
+  origin: synthetic_simulator
+  visibility: agent_visible
+- id: pwr_fault
+  subsystem_id: PWR
+  type: boolean
+  unit: flag
+  domain:
+    kind: boolean
+  description: Power-subsystem fault indication
+  sample_hz: 2
+  missing_policy: nullable_with_quality_flags
+  nominal_model: 'false'
+  doc_ref: SEC-04.pwr_fault
+  origin: synthetic_simulator
+  visibility: agent_visible
+- id: thm_core_temp_pu
+  subsystem_id: THM
+  type: float
+  unit: pu
+  domain:
+    kind: range
+    minimum: 0
+    maximum: 1
+  description: Normalized monitored enclosure temperature
+  sample_hz: 2
+  missing_policy: nullable_with_quality_flags
+  nominal_model: stable:0.46
+  doc_ref: SEC-04.thm_core_temp_pu
+  origin: synthetic_simulator
+  visibility: agent_visible
+- id: thm_payload_temp_pu
+  subsystem_id: THM
+  type: float
+  unit: pu
+  domain:
+    kind: range
+    minimum: 0
+    maximum: 1
+  description: Normalized monitored electronics temperature
+  sample_hz: 2
+  missing_policy: nullable_with_quality_flags
+  nominal_model: stable:0.43
+  doc_ref: SEC-04.thm_payload_temp_pu
+  origin: synthetic_simulator
+  visibility: agent_visible
+- id: thm_delta_pu
+  subsystem_id: THM
+  type: float
+  unit: pu
+  domain:
+    kind: range
+    minimum: -1
+    maximum: 1
+  description: Difference of the two normalized temperature indicators
+  sample_hz: 2
+  missing_policy: nullable_with_quality_flags
+  nominal_model: derived:thm_core_temp_pu-thm_payload_temp_pu
+  doc_ref: SEC-04.thm_delta_pu
+  origin: synthetic_simulator
+  visibility: agent_visible
+- id: thm_warning
+  subsystem_id: THM
+  type: boolean
+  unit: flag
+  domain:
+    kind: boolean
+  description: Synthetic thermal warning indication
+  sample_hz: 2
+  missing_policy: nullable_with_quality_flags
+  nominal_model: 'false'
+  doc_ref: SEC-04.thm_warning
+  origin: synthetic_simulator
+  visibility: agent_visible
+- id: clk_offset_ms
+  subsystem_id: CLK
+  type: float
+  unit: ms
+  domain:
+    kind: range
+    minimum: -250
+    maximum: 250
+  description: Measured observer-clock offset; not a physical vehicle parameter
+  sample_hz: 2
+  missing_policy: nullable_with_quality_flags
+  nominal_model: stable:0
+  doc_ref: SEC-04.clk_offset_ms
+  origin: synthetic_simulator
+  visibility: agent_visible
+- id: clk_lock_state
+  subsystem_id: CLK
+  type: enum
+  unit: symbol
+  domain:
+    kind: enum
+    values:
+    - LOCKED
+    - HOLDOVER
+    - UNLOCKED
+  description: Time synchronization observation
+  sample_hz: 2
+  missing_policy: nullable_with_quality_flags
+  nominal_model: LOCKED
+  doc_ref: SEC-04.clk_lock_state
+  origin: synthetic_simulator
+  visibility: agent_visible
+- id: clk_resync_count
+  subsystem_id: CLK
+  type: integer
+  unit: count
+  domain:
+    kind: range
+    minimum: 0
+    maximum: 100
+  description: Cumulative clock synchronization events
+  sample_hz: 2
+  missing_policy: nullable_with_quality_flags
+  nominal_model: monotonic:0
+  doc_ref: SEC-04.clk_resync_count
+  origin: synthetic_simulator
+  visibility: agent_visible
+- id: hlt_overall_state
+  subsystem_id: HLT
+  type: enum
+  unit: symbol
+  domain:
+    kind: enum
+    values:
+    - NOMINAL
+    - WARNING
+    - DEGRADED
+    - UNKNOWN
+  description: Aggregated subsystem-health classification
+  sample_hz: 2
+  missing_policy: nullable_with_quality_flags
+  nominal_model: NOMINAL
+  doc_ref: SEC-04.hlt_overall_state
+  origin: synthetic_simulator
+  visibility: agent_visible
+- id: hlt_warning_count
+  subsystem_id: HLT
+  type: integer
+  unit: count
+  domain:
+    kind: range
+    minimum: 0
+    maximum: 20
+  description: Count of active warning indicators
+  sample_hz: 2
+  missing_policy: nullable_with_quality_flags
+  nominal_model: derived:active_warnings
+  doc_ref: SEC-04.hlt_warning_count
+  origin: synthetic_simulator
+  visibility: agent_visible
+- id: hlt_degraded
+  subsystem_id: HLT
+  type: boolean
+  unit: flag
+  domain:
+    kind: boolean
+  description: Aggregated degraded-status indication
+  sample_hz: 2
+  missing_policy: nullable_with_quality_flags
+  nominal_model: 'false'
+  doc_ref: SEC-04.hlt_degraded
+  origin: synthetic_simulator
+  visibility: agent_visible
+- id: daq_rate_hz
+  subsystem_id: DAQ
+  type: float
+  unit: Hz
+  domain:
+    kind: range
+    minimum: 0
+    maximum: 10
+  description: Observed source sampling rate
+  sample_hz: 2
+  missing_policy: nullable_with_quality_flags
+  nominal_model: stable:2.0
+  doc_ref: SEC-04.daq_rate_hz
+  origin: synthetic_simulator
+  visibility: agent_visible
+- id: daq_missing_samples
+  subsystem_id: DAQ
+  type: integer
+  unit: count
+  domain:
+    kind: range
+    minimum: 0
+    maximum: 10000
+  description: Cumulative missing source samples
+  sample_hz: 2
+  missing_policy: nullable_with_quality_flags
+  nominal_model: monotonic:0
+  doc_ref: SEC-04.daq_missing_samples
+  origin: synthetic_simulator
+  visibility: agent_visible
+- id: daq_quality_pu
+  subsystem_id: DAQ
+  type: float
+  unit: pu
+  domain:
+    kind: range
+    minimum: 0
+    maximum: 1
+  description: Normalized source data quality
+  sample_hz: 2
+  missing_policy: nullable_with_quality_flags
+  nominal_model: stable:0.99
+  doc_ref: SEC-04.daq_quality_pu
+  origin: synthetic_simulator
+  visibility: agent_visible
+- id: daq_buffer_pct
+  subsystem_id: DAQ
+  type: float
+  unit: percent
+  domain:
+    kind: range
+    minimum: 0
+    maximum: 100
+  description: Source buffer occupancy
+  sample_hz: 2
+  missing_policy: nullable_with_quality_flags
+  nominal_model: stable:18
+  doc_ref: SEC-04.daq_buffer_pct
+  origin: synthetic_simulator
+  visibility: agent_visible
+- id: com_link_state
+  subsystem_id: COM
+  type: enum
+  unit: symbol
+  domain:
+    kind: enum
+    values:
+    - CONNECTED
+    - DEGRADED
+    - DISCONNECTED
+  description: Delivery-link observation
+  sample_hz: 2
+  missing_policy: nullable_with_quality_flags
+  nominal_model: CONNECTED
+  doc_ref: SEC-04.com_link_state
+  origin: synthetic_simulator
+  visibility: agent_visible
+- id: com_loss_pct
+  subsystem_id: COM
+  type: float
+  unit: percent
+  domain:
+    kind: range
+    minimum: 0
+    maximum: 100
+  description: Observed packet-delivery loss percentage
+  sample_hz: 2
+  missing_policy: nullable_with_quality_flags
+  nominal_model: stable:0.1
+  doc_ref: SEC-04.com_loss_pct
+  origin: synthetic_simulator
+  visibility: agent_visible
+- id: com_latency_ms
+  subsystem_id: COM
+  type: float
+  unit: ms
+  domain:
+    kind: range
+    minimum: 0
+    maximum: 10000
+  description: Received delivery latency
+  sample_hz: 2
+  missing_policy: nullable_with_quality_flags
+  nominal_model: stable:45
+  doc_ref: SEC-04.com_latency_ms
+  origin: synthetic_simulator
+  visibility: agent_visible
+- id: com_gap_s
+  subsystem_id: COM
+  type: float
+  unit: s
+  domain:
+    kind: range
+    minimum: 0
+    maximum: 600
+  description: Age of most recent telemetry delivery interruption
+  sample_hz: 2
+  missing_policy: nullable_with_quality_flags
+  nominal_model: stable:0
+  doc_ref: SEC-04.com_gap_s
+  origin: synthetic_simulator
+  visibility: agent_visible
+- id: sup_state
+  subsystem_id: SUP
+  type: enum
+  unit: symbol
+  domain:
+    kind: enum
+    values:
+    - IDLE
+    - READY
+    - ACTIVE
+    - SAFE
+    - ARCHIVED
+  description: Synthetic supervisor observation
+  sample_hz: 2
+  missing_policy: nullable_with_quality_flags
+  nominal_model: phase_dependent
+  doc_ref: SEC-04.sup_state
+  origin: synthetic_simulator
+  visibility: agent_visible
+- id: sup_mode
+  subsystem_id: SUP
+  type: enum
+  unit: symbol
+  domain:
+    kind: enum
+    values:
+    - NORMAL
+    - CAUTION
+    - RECOVERY
+  description: High-level monitoring classification
+  sample_hz: 2
+  missing_policy: nullable_with_quality_flags
+  nominal_model: NORMAL
+  doc_ref: SEC-04.sup_mode
+  origin: synthetic_simulator
+  visibility: agent_visible
+- id: sup_heartbeat_age_s
+  subsystem_id: SUP
+  type: float
+  unit: s
+  domain:
+    kind: range
+    minimum: 0
+    maximum: 60
+  description: Age of most recent received supervisor heartbeat
+  sample_hz: 2
+  missing_policy: nullable_with_quality_flags
+  nominal_model: stable:0.25
+  doc_ref: SEC-04.sup_heartbeat_age_s
+  origin: synthetic_simulator
+  visibility: agent_visible
+- id: sup_fault_count
+  subsystem_id: SUP
+  type: integer
+  unit: count
+  domain:
+    kind: range
+    minimum: 0
+    maximum: 100
+  description: Cumulative supervisor fault events
+  sample_hz: 2
+  missing_policy: nullable_with_quality_flags
+  nominal_model: monotonic:0
+  doc_ref: SEC-04.sup_fault_count
+  origin: synthetic_simulator
+  visibility: agent_visible
+- id: seq_phase_id
+  subsystem_id: SEQ
+  type: enum
+  unit: phase_id
+  domain:
+    kind: enum
+    values:
+    - P0
+    - P1
+    - P2
+    - P3
+    - P4
+    - P5
+    - P6
+  description: Reported major phase identifier
+  sample_hz: 2
+  missing_policy: nullable_with_quality_flags
+  nominal_model: phase_dependent
+  doc_ref: SEC-04.seq_phase_id
+  origin: synthetic_simulator
+  visibility: agent_visible
+- id: seq_subphase_id
+  subsystem_id: SEQ
+  type: enum
+  unit: subphase_id
+  domain:
+    kind: enum
+    values:
+    - P0A
+    - P0B
+    - P1A
+    - P1B
+    - P2A
+    - P2B
+    - P3A
+    - P3B
+    - P4A
+    - P4B
+    - P5A
+    - P5B
+    - P6A
+    - P6B
+  description: Reported subphase identifier
+  sample_hz: 2
+  missing_policy: nullable_with_quality_flags
+  nominal_model: phase_dependent
+  doc_ref: SEC-04.seq_subphase_id
+  origin: synthetic_simulator
+  visibility: agent_visible
+- id: seq_pending
+  subsystem_id: SEQ
+  type: boolean
+  unit: flag
+  domain:
+    kind: boolean
+  description: Pending phase-event acknowledgement indicator
+  sample_hz: 2
+  missing_policy: nullable_with_quality_flags
+  nominal_model: phase_dependent
+  doc_ref: SEC-04.seq_pending
+  origin: synthetic_simulator
+  visibility: agent_visible
+- id: seq_delay_s
+  subsystem_id: SEQ
+  type: float
+  unit: s
+  domain:
+    kind: range
+    minimum: 0
+    maximum: 300
+  description: Observed phase-event delay relative to synthetic schedule
+  sample_hz: 2
+  missing_policy: nullable_with_quality_flags
+  nominal_model: stable:0
+  doc_ref: SEC-04.seq_delay_s
+  origin: synthetic_simulator
+  visibility: agent_visible
+- id: stg_state
+  subsystem_id: STG
+  type: enum
+  unit: symbol
+  domain:
+    kind: enum
+    values:
+    - NOT_APPLICABLE
+    - PENDING
+    - CONFIRMED
+    - UNKNOWN
+  description: Abstract stage-event monitoring state
+  sample_hz: 2
+  missing_policy: nullable_with_quality_flags
+  nominal_model: phase_dependent
+  doc_ref: SEC-04.stg_state
+  origin: synthetic_simulator
+  visibility: agent_visible
+- id: stg_event
+  subsystem_id: STG
+  type: boolean
+  unit: flag
+  domain:
+    kind: boolean
+  description: Abstract, non-mechanical stage-event record marker
+  sample_hz: 2
+  missing_policy: nullable_with_quality_flags
+  nominal_model: phase_dependent
+  doc_ref: SEC-04.stg_event
+  origin: synthetic_simulator
+  visibility: agent_visible
+- id: stg_ack_age_s
+  subsystem_id: STG
+  type: float
+  unit: s
+  domain:
+    kind: range
+    minimum: 0
+    maximum: 300
+  description: Elapsed time awaiting synthetic stage-event acknowledgment
+  sample_hz: 2
+  missing_policy: nullable_with_quality_flags
+  nominal_model: stable:0
+  doc_ref: SEC-04.stg_ack_age_s
+  origin: synthetic_simulator
+  visibility: agent_visible
+- id: env_pressure_pu
+  subsystem_id: ENV
+  type: float
+  unit: pu
+  domain:
+    kind: range
+    minimum: 0
+    maximum: 1
+  description: Synthetic normalized pressure sensor indicator
+  sample_hz: 2
+  missing_policy: nullable_with_quality_flags
+  nominal_model: stable:0.52
+  doc_ref: SEC-04.env_pressure_pu
+  origin: synthetic_simulator
+  visibility: agent_visible
+- id: env_temp_pu
+  subsystem_id: ENV
+  type: float
+  unit: pu
+  domain:
+    kind: range
+    minimum: 0
+    maximum: 1
+  description: Synthetic normalized environmental temperature indicator
+  sample_hz: 2
+  missing_policy: nullable_with_quality_flags
+  nominal_model: stable:0.42
+  doc_ref: SEC-04.env_temp_pu
+  origin: synthetic_simulator
+  visibility: agent_visible
+- id: env_vibration_pu
+  subsystem_id: ENV
+  type: float
+  unit: pu
+  domain:
+    kind: range
+    minimum: 0
+    maximum: 1
+  description: Synthetic normalized vibration status indicator
+  sample_hz: 2
+  missing_policy: nullable_with_quality_flags
+  nominal_model: stable:0.24
+  doc_ref: SEC-04.env_vibration_pu
+  origin: synthetic_simulator
+  visibility: agent_visible
+- id: act_state
+  subsystem_id: ACT
+  type: enum
+  unit: symbol
+  domain:
+    kind: enum
+    values:
+    - IDLE
+    - ACTIVE
+    - DEGRADED
+    - UNKNOWN
+  description: Abstract actuator status (no actuation dynamics)
+  sample_hz: 2
+  missing_policy: nullable_with_quality_flags
+  nominal_model: phase_dependent
+  doc_ref: SEC-04.act_state
+  origin: synthetic_simulator
+  visibility: agent_visible
+- id: act_response_lag_ms
+  subsystem_id: ACT
+  type: float
+  unit: ms
+  domain:
+    kind: range
+    minimum: 0
+    maximum: 5000
+  description: Synthetic response-status acknowledgment delay
+  sample_hz: 2
+  missing_policy: nullable_with_quality_flags
+  nominal_model: stable:35
+  doc_ref: SEC-04.act_response_lag_ms
+  origin: synthetic_simulator
+  visibility: agent_visible
+- id: act_fault
+  subsystem_id: ACT
+  type: boolean
+  unit: flag
+  domain:
+    kind: boolean
+  description: Abstract component-status fault indicator
+  sample_hz: 2
+  missing_policy: nullable_with_quality_flags
+  nominal_model: 'false'
+  doc_ref: SEC-04.act_fault
+  origin: synthetic_simulator
+  visibility: agent_visible
+- id: saf_state
+  subsystem_id: SAF
+  type: enum
+  unit: symbol
+  domain:
+    kind: enum
+    values:
+    - CHECKING
+    - READY
+    - MONITORING
+    - SAFE
+    - UNKNOWN
+  description: Synthetic safety-state observation
+  sample_hz: 2
+  missing_policy: nullable_with_quality_flags
+  nominal_model: phase_dependent
+  doc_ref: SEC-04.saf_state
+  origin: synthetic_simulator
+  visibility: agent_visible
+- id: saf_interlock_ok
+  subsystem_id: SAF
+  type: boolean
+  unit: flag
+  domain:
+    kind: boolean
+  description: Synthetic software interlock status only
+  sample_hz: 2
+  missing_policy: nullable_with_quality_flags
+  nominal_model: 'true'
+  doc_ref: SEC-04.saf_interlock_ok
+  origin: synthetic_simulator
+  visibility: agent_visible
+- id: saf_event_count
+  subsystem_id: SAF
+  type: integer
+  unit: count
+  domain:
+    kind: range
+    minimum: 0
+    maximum: 100
+  description: Cumulative recorded safety-state changes
+  sample_hz: 2
+  missing_policy: nullable_with_quality_flags
+  nominal_model: monotonic:0
+  doc_ref: SEC-04.saf_event_count
+  origin: synthetic_simulator
+  visibility: agent_visible
+- id: log_seq
+  subsystem_id: LOG
+  type: integer
+  unit: count
+  domain:
+    kind: range
+    minimum: 0
+    maximum: 10000000
+  description: Source event-log sequence counter
+  sample_hz: 2
+  missing_policy: nullable_with_quality_flags
+  nominal_model: monotonic:0
+  doc_ref: SEC-04.log_seq
+  origin: synthetic_simulator
+  visibility: agent_visible
+- id: log_integrity_ok
+  subsystem_id: LOG
+  type: boolean
+  unit: flag
+  domain:
+    kind: boolean
+  description: Logger integrity/checksum status
+  sample_hz: 2
+  missing_policy: nullable_with_quality_flags
+  nominal_model: 'true'
+  doc_ref: SEC-04.log_integrity_ok
+  origin: synthetic_simulator
+  visibility: agent_visible
+- id: log_backlog
+  subsystem_id: LOG
+  type: integer
+  unit: count
+  domain:
+    kind: range
+    minimum: 0
+    maximum: 10000
+  description: Pending delayed event records
+  sample_hz: 2
+  missing_policy: nullable_with_quality_flags
+  nominal_model: stable:0
+  doc_ref: SEC-04.log_backlog
+  origin: synthetic_simulator
+  visibility: agent_visible
+phases:
+- id: P0
+  name: Preparation
+  nominal_window_s:
+    start: 0
+    end_exclusive: 100
+  subphases:
+  - id: P0A
+    name: Configuration loaded
+    nominal_window_s:
+      start: 0
+      end_exclusive: 50
+  - id: P0B
+    name: Configuration verified
+    nominal_window_s:
+      start: 50
+      end_exclusive: 100
+  next_phase_id: P1
+  transition_guard_id: G01
+- id: P1
+  name: Readiness
+  nominal_window_s:
+    start: 100
+    end_exclusive: 200
+  subphases:
+  - id: P1A
+    name: Subsystem checks
+    nominal_window_s:
+      start: 100
+      end_exclusive: 150
+  - id: P1B
+    name: Readiness confirmed
+    nominal_window_s:
+      start: 150
+      end_exclusive: 200
+  next_phase_id: P2
+  transition_guard_id: G02
+- id: P2
+  name: Initial observation
+  nominal_window_s:
+    start: 200
+    end_exclusive: 280
+  subphases:
+  - id: P2A
+    name: Mission event registered
+    nominal_window_s:
+      start: 200
+      end_exclusive: 240
+  - id: P2B
+    name: Observation stabilized
+    nominal_window_s:
+      start: 240
+      end_exclusive: 280
+  next_phase_id: P3
+  transition_guard_id: G03
+- id: P3
+  name: Stage transition observation
+  nominal_window_s:
+    start: 280
+    end_exclusive: 400
+  subphases:
+  - id: P3A
+    name: Transition pending
+    nominal_window_s:
+      start: 280
+      end_exclusive: 340
+  - id: P3B
+    name: Transition confirmed
+    nominal_window_s:
+      start: 340
+      end_exclusive: 400
+  next_phase_id: P4
+  transition_guard_id: G04
+- id: P4
+  name: Continued observation
+  nominal_window_s:
+    start: 400
+    end_exclusive: 600
+  subphases:
+  - id: P4A
+    name: Monitoring active
+    nominal_window_s:
+      start: 400
+      end_exclusive: 500
+  - id: P4B
+    name: Consistency assessment
+    nominal_window_s:
+      start: 500
+      end_exclusive: 600
+  next_phase_id: P5
+  transition_guard_id: G05
+- id: P5
+  name: Terminal safe state
+  nominal_window_s:
+    start: 600
+    end_exclusive: 780
+  subphases:
+  - id: P5A
+    name: Terminal event recorded
+    nominal_window_s:
+      start: 600
+      end_exclusive: 690
+  - id: P5B
+    name: Safe-state confirmed
+    nominal_window_s:
+      start: 690
+      end_exclusive: 780
+  next_phase_id: P6
+  transition_guard_id: G06
+- id: P6
+  name: Post-run reconciliation
+  nominal_window_s:
+    start: 780
+    end_exclusive: 900
+  subphases:
+  - id: P6A
+    name: Data reconciliation
+    nominal_window_s:
+      start: 780
+      end_exclusive: 840
+  - id: P6B
+    name: Run archived
+    nominal_window_s:
+      start: 840
+      end_exclusive: 900
+  next_phase_id: null
+  transition_guard_id: null
+transition_guards:
+- id: G01
+  from_phase: P0
+  to_phase: P1
+  expression: phase_time_reached AND declared_checks_passed (synthetic; evaluation-only)
+  nominal_not_before_s: 100
+  on_failed_guard: record_pending_and_observe; never infer physical action
+- id: G02
+  from_phase: P1
+  to_phase: P2
+  expression: phase_time_reached AND declared_checks_passed (synthetic; evaluation-only)
+  nominal_not_before_s: 200
+  on_failed_guard: record_pending_and_observe; never infer physical action
+- id: G03
+  from_phase: P2
+  to_phase: P3
+  expression: phase_time_reached AND declared_checks_passed (synthetic; evaluation-only)
+  nominal_not_before_s: 280
+  on_failed_guard: record_pending_and_observe; never infer physical action
+- id: G04
+  from_phase: P3
+  to_phase: P4
+  expression: phase_time_reached AND declared_checks_passed (synthetic; evaluation-only)
+  nominal_not_before_s: 400
+  on_failed_guard: record_pending_and_observe; never infer physical action
+- id: G05
+  from_phase: P4
+  to_phase: P5
+  expression: phase_time_reached AND declared_checks_passed (synthetic; evaluation-only)
+  nominal_not_before_s: 600
+  on_failed_guard: record_pending_and_observe; never infer physical action
+- id: G06
+  from_phase: P5
+  to_phase: P6
+  expression: phase_time_reached AND declared_checks_passed (synthetic; evaluation-only)
+  nominal_not_before_s: 780
+  on_failed_guard: record_pending_and_observe; never infer physical action
+rules:
+- id: R01
+  name: Readiness and configuration
+  statement: P1B requires cfg_integrity_ok=true on nominal runs
+  channels:
+  - cfg_integrity_ok
+  - seq_subphase_id
+  applicability: nominal_only
+  implementation_status: definition_only
+  severity: major
+- id: R02
+  name: Timestamp integrity
+  statement: source_time increases by 0.5 seconds per scheduled row; clock corrections are separately logged
+  channels:
+  - clk_offset_ms
+  - clk_lock_state
+  - clk_resync_count
+  applicability: all_runs
+  implementation_status: definition_only
+  severity: critical
+- id: R03
+  name: State sequence
+  statement: Nominal run visits P0A through P6B in declared order; anomalous reported states may differ from
+    canonical truth
+  channels:
+  - seq_phase_id
+  - seq_subphase_id
+  applicability: nominal_only
+  implementation_status: definition_only
+  severity: critical
+- id: R04
+  name: Stage event triangulation
+  statement: P3 reported transition must be supported by independent STG and LOG observations
+  channels:
+  - seq_pending
+  - stg_state
+  - stg_event
+  - log_seq
+  applicability: evidence_rule
+  implementation_status: definition_only
+  severity: major
+- id: R05
+  name: Source versus delivery loss
+  statement: Increment daq_missing_samples only on source capture loss; delivery-only loss changes COM observations
+  channels:
+  - daq_missing_samples
+  - com_loss_pct
+  - com_gap_s
+  applicability: all_runs
+  implementation_status: definition_only
+  severity: major
+- id: R06
+  name: Health aggregation
+  statement: Reported aggregate state must be explainable from active warnings and observation-quality indicators
+  channels:
+  - hlt_overall_state
+  - hlt_warning_count
+  - hlt_degraded
+  - pwr_fault
+  - thm_warning
+  - act_fault
+  applicability: evidence_rule
+  implementation_status: definition_only
+  severity: major
+- id: R07
+  name: Safe-state consistency
+  statement: Reported safe state requires compatible supervisor and interlock observations
+  channels:
+  - saf_state
+  - saf_interlock_ok
+  - sup_state
+  applicability: evidence_rule
+  implementation_status: definition_only
+  severity: major
+- id: R08
+  name: Log continuity
+  statement: Event log sequence and source/delivery timestamps permit reconciliation; late arrival does not
+    rewrite event time
+  channels:
+  - log_seq
+  - log_integrity_ok
+  - log_backlog
+  applicability: all_runs
+  implementation_status: definition_only
+  severity: major
+- id: R09
+  name: Derived thermal delta
+  statement: thm_delta_pu equals core minus payload within synthetic rounding tolerance
+  channels:
+  - thm_delta_pu
+  - thm_core_temp_pu
+  - thm_payload_temp_pu
+  applicability: all_runs
+  implementation_status: definition_only
+  severity: major
+- id: R10
+  name: Counter monotonicity
+  statement: Designated cumulative counters never decrease within an epoch
+  channels:
+  - clk_resync_count
+  - daq_missing_samples
+  - sup_fault_count
+  - saf_event_count
+  - log_seq
+  applicability: all_runs
+  implementation_status: definition_only
+  severity: critical
+- id: R11
+  name: Visual provenance
+  statement: Run-derived figure metadata must carry exact run id, time range and channel ids
+  channels: []
+  applicability: all_runs
+  implementation_status: definition_only
+  severity: major
+- id: R12
+  name: Ground truth separation
+  statement: Private anomaly truth files are not part of agent-accessible retrieval or figure context
+  channels: []
+  applicability: all_runs
+  implementation_status: definition_only
+  severity: critical
+scenarios:
+- id: S01
+  name: Nominal mission
+  kind: nominal
+  injection_kind: none
+  linked_channels: []
+  relevant_rule_ids:
+  - R01
+  - R02
+  - R03
+  - R05
+  - R08
+  - R09
+  - R10
+  investigation_goal: End-to-end conformance
+  seeds:
+  - 1
+  - 2
+  - 3
+  run_ids:
+  - S01-001
+  - S01-002
+  - S01-003
+  configuration_status: specified_not_generated
+  ground_truth_contract:
+    storage: private_evaluator_only
+    required_fields:
+    - run_id
+    - spec_version
+    - seed
+    - cause_label
+    - onset_s
+    - offset_s
+    - affected_channels
+    - event_time_evidence
+    - expected_observed_effects
+    - discriminating_evidence
+    must_not_enter_agent_retrieval: true
+- id: S02
+  name: Delayed transition
+  kind: anomalous
+  injection_kind: reported_state_delay
+  linked_channels:
+  - seq_pending
+  - seq_delay_s
+  - stg_ack_age_s
+  - stg_state
+  relevant_rule_ids:
+  - R03
+  - R04
+  investigation_goal: Timing, acknowledgment and evidence correlation
+  seeds:
+  - 1
+  - 2
+  - 3
+  run_ids:
+  - S02-001
+  - S02-002
+  - S02-003
+  configuration_status: specified_not_generated
+  ground_truth_contract:
+    storage: private_evaluator_only
+    required_fields:
+    - run_id
+    - spec_version
+    - seed
+    - cause_label
+    - onset_s
+    - offset_s
+    - affected_channels
+    - event_time_evidence
+    - expected_observed_effects
+    - discriminating_evidence
+    must_not_enter_agent_retrieval: true
+- id: S03
+  name: Sensor drift
+  kind: anomalous
+  injection_kind: measurement_bias
+  linked_channels:
+  - env_temp_pu
+  - daq_quality_pu
+  - hlt_warning_count
+  relevant_rule_ids:
+  - R06
+  investigation_goal: Sensor validity versus system state
+  seeds:
+  - 1
+  - 2
+  - 3
+  run_ids:
+  - S03-001
+  - S03-002
+  - S03-003
+  configuration_status: specified_not_generated
+  ground_truth_contract:
+    storage: private_evaluator_only
+    required_fields:
+    - run_id
+    - spec_version
+    - seed
+    - cause_label
+    - onset_s
+    - offset_s
+    - affected_channels
+    - event_time_evidence
+    - expected_observed_effects
+    - discriminating_evidence
+    must_not_enter_agent_retrieval: true
+- id: S04
+  name: Acquisition dropout
+  kind: anomalous
+  injection_kind: source_missing_samples
+  linked_channels:
+  - daq_missing_samples
+  - daq_quality_pu
+  - daq_buffer_pct
+  relevant_rule_ids:
+  - R05
+  - R08
+  investigation_goal: Source discontinuity versus downstream delivery
+  seeds:
+  - 1
+  - 2
+  - 3
+  run_ids:
+  - S04-001
+  - S04-002
+  - S04-003
+  configuration_status: specified_not_generated
+  ground_truth_contract:
+    storage: private_evaluator_only
+    required_fields:
+    - run_id
+    - spec_version
+    - seed
+    - cause_label
+    - onset_s
+    - offset_s
+    - affected_channels
+    - event_time_evidence
+    - expected_observed_effects
+    - discriminating_evidence
+    must_not_enter_agent_retrieval: true
+- id: S05
+  name: Contradictory event log
+  kind: anomalous
+  injection_kind: logger_backlog
+  linked_channels:
+  - log_backlog
+  - log_seq
+  - log_integrity_ok
+  - seq_subphase_id
+  relevant_rule_ids:
+  - R04
+  - R08
+  investigation_goal: Event-time reconciliation
+  seeds:
+  - 1
+  - 2
+  - 3
+  run_ids:
+  - S05-001
+  - S05-002
+  - S05-003
+  configuration_status: specified_not_generated
+  ground_truth_contract:
+    storage: private_evaluator_only
+    required_fields:
+    - run_id
+    - spec_version
+    - seed
+    - cause_label
+    - onset_s
+    - offset_s
+    - affected_channels
+    - event_time_evidence
+    - expected_observed_effects
+    - discriminating_evidence
+    must_not_enter_agent_retrieval: true
+- id: S06
+  name: Cascading warnings
+  kind: anomalous
+  injection_kind: upstream_health_degradation
+  linked_channels:
+  - pwr_bus_level_pu
+  - pwr_margin_pu
+  - pwr_fault
+  - thm_warning
+  - hlt_overall_state
+  relevant_rule_ids:
+  - R06
+  investigation_goal: Common-cause versus independent warnings
+  seeds:
+  - 1
+  - 2
+  - 3
+  run_ids:
+  - S06-001
+  - S06-002
+  - S06-003
+  configuration_status: specified_not_generated
+  ground_truth_contract:
+    storage: private_evaluator_only
+    required_fields:
+    - run_id
+    - spec_version
+    - seed
+    - cause_label
+    - onset_s
+    - offset_s
+    - affected_channels
+    - event_time_evidence
+    - expected_observed_effects
+    - discriminating_evidence
+    must_not_enter_agent_retrieval: true
+- id: S07
+  name: Communications interruption
+  kind: anomalous
+  injection_kind: delivery_only_loss
+  linked_channels:
+  - com_link_state
+  - com_loss_pct
+  - com_gap_s
+  - com_latency_ms
+  relevant_rule_ids:
+  - R05
+  investigation_goal: Data source versus transport degradation
+  seeds:
+  - 1
+  - 2
+  - 3
+  run_ids:
+  - S07-001
+  - S07-002
+  - S07-003
+  configuration_status: specified_not_generated
+  ground_truth_contract:
+    storage: private_evaluator_only
+    required_fields:
+    - run_id
+    - spec_version
+    - seed
+    - cause_label
+    - onset_s
+    - offset_s
+    - affected_channels
+    - event_time_evidence
+    - expected_observed_effects
+    - discriminating_evidence
+    must_not_enter_agent_retrieval: true
+- id: S08
+  name: Competing explanations
+  kind: anomalous
+  injection_kind: clock_and_delivery_discrepancy
+  linked_channels:
+  - clk_offset_ms
+  - clk_lock_state
+  - com_latency_ms
+  - log_backlog
+  - log_seq
+  relevant_rule_ids:
+  - R02
+  - R08
+  investigation_goal: Verify competing clock and reporting hypotheses
+  seeds:
+  - 1
+  - 2
+  - 3
+  run_ids:
+  - S08-001
+  - S08-002
+  - S08-003
+  configuration_status: specified_not_generated
+  ground_truth_contract:
+    storage: private_evaluator_only
+    required_fields:
+    - run_id
+    - spec_version
+    - seed
+    - cause_label
+    - onset_s
+    - offset_s
+    - affected_channels
+    - event_time_evidence
+    - expected_observed_effects
+    - discriminating_evidence
+    must_not_enter_agent_retrieval: true
+figures:
+- id: FIG-01
+  title: Fictional exterior illustration
+  type: illustration
+  generation_method: generated_synthetic
+  document_section_id: SEC-02
+  depicted_subsystem_ids:
+  - CFG
+  - SUP
+  linked_channel_ids:
+  - cfg_profile_id
+  planned_source_run_id: null
+  requires_run_provenance: false
+  description: Stylized fictional vehicle appearance; not an engineering cutaway
+  synthetic: true
+  production_status: defined_not_regenerated
+  validation_status: awaiting_visual_and_semantic_review
+  provenance_requirements:
+  - spec_version
+  - asset_sha256
+  - human_review_status
+- id: FIG-02
+  title: High-level subsystem architecture
+  type: diagram
+  generation_method: programmatic
+  document_section_id: SEC-02
+  depicted_subsystem_ids:
+  - CFG
+  - PWR
+  - THM
+  - CLK
+  - HLT
+  - DAQ
+  - COM
+  - SUP
+  - SEQ
+  - STG
+  - ENV
+  - ACT
+  - SAF
+  - LOG
+  linked_channel_ids:
+  - hlt_overall_state
+  - seq_phase_id
+  planned_source_run_id: null
+  requires_run_provenance: false
+  description: All subsystem nodes and data dependencies
+  synthetic: true
+  production_status: defined_not_regenerated
+  validation_status: awaiting_visual_and_semantic_review
+  provenance_requirements:
+  - spec_version
+  - asset_sha256
+  - human_review_status
+- id: FIG-03
+  title: Subsystem dependency network
+  type: diagram
+  generation_method: programmatic
+  document_section_id: SEC-03
+  depicted_subsystem_ids:
+  - PWR
+  - THM
+  - DAQ
+  - ENV
+  - ACT
+  - HLT
+  linked_channel_ids:
+  - pwr_fault
+  - thm_warning
+  - daq_quality_pu
+  - hlt_overall_state
+  planned_source_run_id: null
+  requires_run_provenance: false
+  description: 'Canonical depends_on: dependent → dependency; rendered support arrow: dependency → dependent'
+  synthetic: true
+  production_status: defined_not_regenerated
+  validation_status: awaiting_visual_and_semantic_review
+  provenance_requirements:
+  - spec_version
+  - asset_sha256
+  - human_review_status
+- id: FIG-04
+  title: Mission phase timeline
+  type: diagram
+  generation_method: programmatic
+  document_section_id: SEC-05
+  depicted_subsystem_ids:
+  - SEQ
+  - SUP
+  - STG
+  linked_channel_ids:
+  - seq_phase_id
+  - seq_subphase_id
+  - stg_state
+  planned_source_run_id: null
+  requires_run_provenance: false
+  description: All major and minor phase bands
+  synthetic: true
+  production_status: defined_not_regenerated
+  validation_status: awaiting_visual_and_semantic_review
+  provenance_requirements:
+  - spec_version
+  - asset_sha256
+  - human_review_status
+- id: FIG-05
+  title: Data acquisition and delivery flow
+  type: diagram
+  generation_method: programmatic
+  document_section_id: SEC-07
+  depicted_subsystem_ids:
+  - CLK
+  - DAQ
+  - COM
+  - LOG
+  linked_channel_ids:
+  - daq_missing_samples
+  - com_loss_pct
+  - log_backlog
+  planned_source_run_id: null
+  requires_run_provenance: false
+  description: Source capture separated from delivery transport
+  synthetic: true
+  production_status: defined_not_regenerated
+  validation_status: awaiting_visual_and_semantic_review
+  provenance_requirements:
+  - spec_version
+  - asset_sha256
+  - human_review_status
+- id: FIG-06
+  title: Health and safety state diagram
+  type: diagram
+  generation_method: programmatic
+  document_section_id: SEC-06
+  depicted_subsystem_ids:
+  - HLT
+  - SAF
+  - SUP
+  linked_channel_ids:
+  - hlt_overall_state
+  - saf_state
+  - sup_state
+  planned_source_run_id: null
+  requires_run_provenance: false
+  description: Abstract health state classification
+  synthetic: true
+  production_status: defined_not_regenerated
+  validation_status: awaiting_visual_and_semantic_review
+  provenance_requirements:
+  - spec_version
+  - asset_sha256
+  - human_review_status
+- id: FIG-07
+  title: Synthetic mission control display
+  type: screenshot
+  generation_method: data_rendered
+  document_section_id: SEC-09
+  depicted_subsystem_ids:
+  - COM
+  - DAQ
+  - HLT
+  linked_channel_ids:
+  - com_link_state
+  - daq_quality_pu
+  - hlt_overall_state
+  planned_source_run_id: S06-001
+  requires_run_provenance: true
+  description: Synthetic console drawn from exact run observations
+  synthetic: true
+  production_status: defined_not_regenerated
+  validation_status: awaiting_visual_and_semantic_review
+  provenance_requirements:
+  - spec_version
+  - asset_sha256
+  - human_review_status
+  - run_id
+  - time_range
+  - input_channel_ids
+  - input_data_sha256
+- id: FIG-08
+  title: Fictional equipment inspection image
+  type: illustration
+  generation_method: generated_synthetic
+  document_section_id: SEC-03
+  depicted_subsystem_ids:
+  - DAQ
+  - PWR
+  linked_channel_ids:
+  - daq_buffer_pct
+  - pwr_bus_level_pu
+  planned_source_run_id: null
+  requires_run_provenance: false
+  description: Clearly synthetic labeled fictional equipment
+  synthetic: true
+  production_status: defined_not_regenerated
+  validation_status: awaiting_visual_and_semantic_review
+  provenance_requirements:
+  - spec_version
+  - asset_sha256
+  - human_review_status
+- id: FIG-09
+  title: Nominal multichannel telemetry
+  type: chart
+  generation_method: data_rendered
+  document_section_id: SEC-04
+  depicted_subsystem_ids:
+  - SEQ
+  - PWR
+  - HLT
+  linked_channel_ids:
+  - seq_phase_id
+  - pwr_bus_level_pu
+  - hlt_warning_count
+  planned_source_run_id: S01-001
+  requires_run_provenance: true
+  description: Derived from original run samples, not VLM-imagined data
+  synthetic: true
+  production_status: defined_not_regenerated
+  validation_status: awaiting_visual_and_semantic_review
+  provenance_requirements:
+  - spec_version
+  - asset_sha256
+  - human_review_status
+  - run_id
+  - time_range
+  - input_channel_ids
+  - input_data_sha256
+- id: FIG-10
+  title: Sensor drift comparison
+  type: chart
+  generation_method: data_rendered
+  document_section_id: SEC-08
+  depicted_subsystem_ids:
+  - ENV
+  - DAQ
+  linked_channel_ids:
+  - env_temp_pu
+  - daq_quality_pu
+  planned_source_run_id: S03-001
+  requires_run_provenance: true
+  description: Biased sensor reading compared with source-quality evidence
+  synthetic: true
+  production_status: defined_not_regenerated
+  validation_status: awaiting_visual_and_semantic_review
+  provenance_requirements:
+  - spec_version
+  - asset_sha256
+  - human_review_status
+  - run_id
+  - time_range
+  - input_channel_ids
+  - input_data_sha256
+- id: FIG-11
+  title: Event log and telemetry reconciliation
+  type: chart
+  generation_method: data_rendered
+  document_section_id: SEC-07
+  depicted_subsystem_ids:
+  - LOG
+  - SEQ
+  - STG
+  linked_channel_ids:
+  - log_backlog
+  - seq_subphase_id
+  - stg_state
+  planned_source_run_id: S05-001
+  requires_run_provenance: true
+  description: Event time versus received time and source events
+  synthetic: true
+  production_status: defined_not_regenerated
+  validation_status: awaiting_visual_and_semantic_review
+  provenance_requirements:
+  - spec_version
+  - asset_sha256
+  - human_review_status
+  - run_id
+  - time_range
+  - input_channel_ids
+  - input_data_sha256
+- id: FIG-12
+  title: Investigation evidence graph
+  type: diagram
+  generation_method: programmatic
+  document_section_id: SEC-11
+  depicted_subsystem_ids:
+  - CLK
+  - COM
+  - LOG
+  - HLT
+  linked_channel_ids:
+  - clk_offset_ms
+  - com_latency_ms
+  - log_backlog
+  planned_source_run_id: S08-001
+  requires_run_provenance: false
+  description: Illustrative hypothesis/evidence structure, not a proven agent answer
+  synthetic: true
+  production_status: defined_not_regenerated
+  validation_status: awaiting_visual_and_semantic_review
+  provenance_requirements:
+  - spec_version
+  - asset_sha256
+  - human_review_status
+  - run_id
+  - time_range
+  - input_channel_ids
+  - input_data_sha256
+benchmarks:
+- id: B001
+  scenario_id: S01
+  difficulty: foundation
+  question_template: Identify the phase at a specified source timestamp
+  figure_ids: []
+  required_channel_ids:
+  - seq_phase_id
+  - seq_subphase_id
+  document_sections:
+  - SEC-04
+  - SEC-06
+  requires_figure: false
+  requires_telemetry: true
+  requires_replanning: false
+  ground_truth_source: private_evaluator_only
+  status: question_template_only
+- id: B002
+  scenario_id: S01
+  difficulty: foundation
+  question_template: Locate the specification of the power monitoring subsystem
+  figure_ids:
+  - FIG-02
+  required_channel_ids:
+  - pwr_bus_level_pu
+  document_sections:
+  - SEC-04
+  - SEC-06
+  - SEC-09
+  requires_figure: true
+  requires_telemetry: true
+  requires_replanning: false
+  ground_truth_source: private_evaluator_only
+  status: question_template_only
+- id: B003
+  scenario_id: S01
+  difficulty: foundation
+  question_template: Identify the logger event sequence channel
+  figure_ids: []
+  required_channel_ids:
+  - log_seq
+  document_sections:
+  - SEC-04
+  - SEC-06
+  requires_figure: false
+  requires_telemetry: true
+  requires_replanning: false
+  ground_truth_source: private_evaluator_only
+  status: question_template_only
+- id: B004
+  scenario_id: S01
+  difficulty: foundation
+  question_template: Report whether all nominal subphases were observed
+  figure_ids:
+  - FIG-04
+  required_channel_ids:
+  - seq_subphase_id
+  document_sections:
+  - SEC-04
+  - SEC-06
+  - SEC-09
+  requires_figure: true
+  requires_telemetry: true
+  requires_replanning: false
+  ground_truth_source: private_evaluator_only
+  status: question_template_only
+- id: B005
+  scenario_id: S01
+  difficulty: foundation
+  question_template: Distinguish a source timestamp from delivery timestamp
+  figure_ids: []
+  required_channel_ids:
+  - clk_offset_ms
+  document_sections:
+  - SEC-04
+  - SEC-06
+  requires_figure: false
+  requires_telemetry: true
+  requires_replanning: false
+  ground_truth_source: private_evaluator_only
+  status: question_template_only
+- id: B006
+  scenario_id: S01
+  difficulty: foundation
+  question_template: Describe the source to delivery monitoring relationship
+  figure_ids:
+  - FIG-05
+  required_channel_ids:
+  - daq_missing_samples
+  - com_loss_pct
+  document_sections:
+  - SEC-04
+  - SEC-06
+  - SEC-09
+  requires_figure: true
+  requires_telemetry: true
+  requires_replanning: false
+  ground_truth_source: private_evaluator_only
+  status: question_template_only
+- id: B007
+  scenario_id: S01
+  difficulty: foundation
+  question_template: Identify active warnings at a selected time
+  figure_ids: []
+  required_channel_ids:
+  - hlt_warning_count
+  document_sections:
+  - SEC-04
+  - SEC-06
+  requires_figure: false
+  requires_telemetry: true
+  requires_replanning: false
+  ground_truth_source: private_evaluator_only
+  status: question_template_only
+- id: B008
+  scenario_id: S01
+  difficulty: foundation
+  question_template: Confirm normal configuration integrity
+  figure_ids: []
+  required_channel_ids:
+  - cfg_integrity_ok
+  document_sections:
+  - SEC-04
+  - SEC-06
+  requires_figure: false
+  requires_telemetry: true
+  requires_replanning: false
+  ground_truth_source: private_evaluator_only
+  status: question_template_only
+- id: B009
+  scenario_id: S02
+  difficulty: intermediate
+  question_template: Find the first delayed phase observation
+  figure_ids:
+  - FIG-04
+  required_channel_ids:
+  - seq_pending
+  - seq_delay_s
+  document_sections:
+  - SEC-04
+  - SEC-06
+  - SEC-09
+  requires_figure: true
+  requires_telemetry: true
+  requires_replanning: false
+  ground_truth_source: private_evaluator_only
+  status: question_template_only
+- id: B010
+  scenario_id: S02
+  difficulty: intermediate
+  question_template: Compare stage monitor and sequencer acknowledgments
+  figure_ids: []
+  required_channel_ids:
+  - stg_ack_age_s
+  - seq_delay_s
+  document_sections:
+  - SEC-04
+  - SEC-06
+  requires_figure: false
+  requires_telemetry: true
+  requires_replanning: false
+  ground_truth_source: private_evaluator_only
+  status: question_template_only
+- id: B011
+  scenario_id: S03
+  difficulty: intermediate
+  question_template: Identify the drifting synthetic environment measurement
+  figure_ids:
+  - FIG-10
+  required_channel_ids:
+  - env_temp_pu
+  document_sections:
+  - SEC-04
+  - SEC-06
+  - SEC-09
+  requires_figure: true
+  requires_telemetry: true
+  requires_replanning: false
+  ground_truth_source: private_evaluator_only
+  status: question_template_only
+- id: B012
+  scenario_id: S03
+  difficulty: intermediate
+  question_template: Check if independent source-quality flags corroborate the anomaly
+  figure_ids: []
+  required_channel_ids:
+  - daq_quality_pu
+  - env_temp_pu
+  document_sections:
+  - SEC-04
+  - SEC-06
+  requires_figure: false
+  requires_telemetry: true
+  requires_replanning: false
+  ground_truth_source: private_evaluator_only
+  status: question_template_only
+- id: B013
+  scenario_id: S04
+  difficulty: intermediate
+  question_template: Find the first source sample gap
+  figure_ids: []
+  required_channel_ids:
+  - daq_missing_samples
+  document_sections:
+  - SEC-04
+  - SEC-06
+  requires_figure: false
+  requires_telemetry: true
+  requires_replanning: false
+  ground_truth_source: private_evaluator_only
+  status: question_template_only
+- id: B014
+  scenario_id: S04
+  difficulty: intermediate
+  question_template: Distinguish source dropout from lost delivery
+  figure_ids:
+  - FIG-05
+  required_channel_ids:
+  - daq_missing_samples
+  - com_loss_pct
+  document_sections:
+  - SEC-04
+  - SEC-06
+  - SEC-09
+  requires_figure: true
+  requires_telemetry: true
+  requires_replanning: false
+  ground_truth_source: private_evaluator_only
+  status: question_template_only
+- id: B015
+  scenario_id: S05
+  difficulty: intermediate
+  question_template: Reconcile a delayed log entry with observed phase
+  figure_ids:
+  - FIG-11
+  required_channel_ids:
+  - log_backlog
+  - seq_subphase_id
+  document_sections:
+  - SEC-04
+  - SEC-06
+  - SEC-09
+  requires_figure: true
+  requires_telemetry: true
+  requires_replanning: true
+  ground_truth_source: private_evaluator_only
+  status: question_template_only
+- id: B016
+  scenario_id: S05
+  difficulty: intermediate
+  question_template: Explain why receive order need not equal event order
+  figure_ids: []
+  required_channel_ids:
+  - log_seq
+  - log_backlog
+  document_sections:
+  - SEC-04
+  - SEC-06
+  requires_figure: false
+  requires_telemetry: true
+  requires_replanning: false
+  ground_truth_source: private_evaluator_only
+  status: question_template_only
+- id: B017
+  scenario_id: S06
+  difficulty: intermediate
+  question_template: Identify warnings visible on a synthetic display
+  figure_ids:
+  - FIG-07
+  required_channel_ids:
+  - hlt_warning_count
+  document_sections:
+  - SEC-04
+  - SEC-06
+  - SEC-09
+  requires_figure: true
+  requires_telemetry: true
+  requires_replanning: false
+  ground_truth_source: private_evaluator_only
+  status: question_template_only
+- id: B018
+  scenario_id: S06
+  difficulty: intermediate
+  question_template: Trace a warning through the dependency graph
+  figure_ids:
+  - FIG-03
+  required_channel_ids:
+  - pwr_fault
+  - hlt_overall_state
+  document_sections:
+  - SEC-04
+  - SEC-06
+  - SEC-09
+  requires_figure: true
+  requires_telemetry: true
+  requires_replanning: false
+  ground_truth_source: private_evaluator_only
+  status: question_template_only
+- id: B019
+  scenario_id: S07
+  difficulty: intermediate
+  question_template: Determine if source acquisition continued during delivery loss
+  figure_ids:
+  - FIG-05
+  required_channel_ids:
+  - daq_missing_samples
+  - com_loss_pct
+  document_sections:
+  - SEC-04
+  - SEC-06
+  - SEC-09
+  requires_figure: true
+  requires_telemetry: true
+  requires_replanning: false
+  ground_truth_source: private_evaluator_only
+  status: question_template_only
+- id: B020
+  scenario_id: S07
+  difficulty: intermediate
+  question_template: Quantify the delivery interruption in source-time order
+  figure_ids: []
+  required_channel_ids:
+  - com_gap_s
+  - com_latency_ms
+  document_sections:
+  - SEC-04
+  - SEC-06
+  requires_figure: false
+  requires_telemetry: true
+  requires_replanning: false
+  ground_truth_source: private_evaluator_only
+  status: question_template_only
+- id: B021
+  scenario_id: S08
+  difficulty: intermediate
+  question_template: Compare clock correction counters with offset observations
+  figure_ids: []
+  required_channel_ids:
+  - clk_offset_ms
+  - clk_resync_count
+  document_sections:
+  - SEC-04
+  - SEC-06
+  requires_figure: false
+  requires_telemetry: true
+  requires_replanning: true
+  ground_truth_source: private_evaluator_only
+  status: question_template_only
+- id: B022
+  scenario_id: S01
+  difficulty: intermediate
+  question_template: Check chronological agreement between nominal event markers and phase records
+  figure_ids:
+  - FIG-09
+  required_channel_ids:
+  - seq_phase_id
+  - stg_event
+  document_sections:
+  - SEC-04
+  - SEC-06
+  - SEC-09
+  requires_figure: true
+  requires_telemetry: true
+  requires_replanning: false
+  ground_truth_source: private_evaluator_only
+  status: question_template_only
+- id: B023
+  scenario_id: S02
+  difficulty: advanced
+  question_template: Evaluate delayed-observation alternative explanations
+  figure_ids: []
+  required_channel_ids:
+  - seq_delay_s
+  - stg_ack_age_s
+  - log_backlog
+  document_sections:
+  - SEC-04
+  - SEC-06
+  requires_figure: false
+  requires_telemetry: true
+  requires_replanning: true
+  ground_truth_source: private_evaluator_only
+  status: question_template_only
+- id: B024
+  scenario_id: S03
+  difficulty: advanced
+  question_template: Reject the false hypothesis of a full subsystem degradation
+  figure_ids:
+  - FIG-10
+  required_channel_ids:
+  - env_temp_pu
+  - hlt_overall_state
+  - daq_quality_pu
+  document_sections:
+  - SEC-04
+  - SEC-06
+  - SEC-09
+  requires_figure: true
+  requires_telemetry: true
+  requires_replanning: true
+  ground_truth_source: private_evaluator_only
+  status: question_template_only
+- id: B025
+  scenario_id: S04
+  difficulty: advanced
+  question_template: Reconstruct source continuity from incomplete delivered observations
+  figure_ids: []
+  required_channel_ids:
+  - daq_missing_samples
+  - com_gap_s
+  - log_seq
+  document_sections:
+  - SEC-04
+  - SEC-06
+  requires_figure: false
+  requires_telemetry: true
+  requires_replanning: true
+  ground_truth_source: private_evaluator_only
+  status: question_template_only
+- id: B026
+  scenario_id: S05
+  difficulty: advanced
+  question_template: Resolve contradictory event record and telemetry evidence
+  figure_ids:
+  - FIG-11
+  required_channel_ids:
+  - log_seq
+  - log_backlog
+  - seq_phase_id
+  document_sections:
+  - SEC-04
+  - SEC-06
+  - SEC-09
+  requires_figure: true
+  requires_telemetry: true
+  requires_replanning: true
+  ground_truth_source: private_evaluator_only
+  status: question_template_only
+- id: B027
+  scenario_id: S06
+  difficulty: advanced
+  question_template: Determine whether warnings share an upstream origin
+  figure_ids:
+  - FIG-03
+  - FIG-07
+  required_channel_ids:
+  - pwr_fault
+  - thm_warning
+  - hlt_overall_state
+  document_sections:
+  - SEC-04
+  - SEC-06
+  - SEC-09
+  requires_figure: true
+  requires_telemetry: true
+  requires_replanning: true
+  ground_truth_source: private_evaluator_only
+  status: question_template_only
+- id: B028
+  scenario_id: S06
+  difficulty: advanced
+  question_template: Distinguish earliest indicator from subsequent symptoms
+  figure_ids:
+  - FIG-03
+  required_channel_ids:
+  - pwr_bus_level_pu
+  - hlt_warning_count
+  document_sections:
+  - SEC-04
+  - SEC-06
+  - SEC-09
+  requires_figure: true
+  requires_telemetry: true
+  requires_replanning: false
+  ground_truth_source: private_evaluator_only
+  status: question_template_only
+- id: B029
+  scenario_id: S07
+  difficulty: advanced
+  question_template: Disprove the initial inference that the source recorder failed
+  figure_ids: []
+  required_channel_ids:
+  - daq_missing_samples
+  - com_loss_pct
+  - com_gap_s
+  document_sections:
+  - SEC-04
+  - SEC-06
+  requires_figure: false
+  requires_telemetry: true
+  requires_replanning: true
+  ground_truth_source: private_evaluator_only
+  status: question_template_only
+- id: B030
+  scenario_id: S08
+  difficulty: advanced
+  question_template: Replan when event times and receive times disagree
+  figure_ids:
+  - FIG-12
+  required_channel_ids:
+  - clk_offset_ms
+  - log_backlog
+  document_sections:
+  - SEC-04
+  - SEC-06
+  - SEC-09
+  requires_figure: true
+  requires_telemetry: true
+  requires_replanning: true
+  ground_truth_source: private_evaluator_only
+  status: question_template_only
+- id: B031
+  scenario_id: S08
+  difficulty: advanced
+  question_template: Compare competing clock and delivery hypotheses
+  figure_ids:
+  - FIG-12
+  required_channel_ids:
+  - clk_lock_state
+  - com_latency_ms
+  document_sections:
+  - SEC-04
+  - SEC-06
+  - SEC-09
+  requires_figure: true
+  requires_telemetry: true
+  requires_replanning: true
+  ground_truth_source: private_evaluator_only
+  status: question_template_only
+- id: B032
+  scenario_id: S03
+  difficulty: advanced
+  question_template: Test consistency of figure interpretation against original samples
+  figure_ids:
+  - FIG-10
+  required_channel_ids:
+  - env_temp_pu
+  document_sections:
+  - SEC-04
+  - SEC-06
+  - SEC-09
+  requires_figure: true
+  requires_telemetry: true
+  requires_replanning: false
+  ground_truth_source: private_evaluator_only
+  status: question_template_only
+- id: B033
+  scenario_id: S05
+  difficulty: advanced
+  question_template: Audit whether a scenario chart uses the correct run source
+  figure_ids:
+  - FIG-11
+  required_channel_ids:
+  - log_backlog
+  document_sections:
+  - SEC-04
+  - SEC-06
+  - SEC-09
+  requires_figure: true
+  requires_telemetry: true
+  requires_replanning: false
+  ground_truth_source: private_evaluator_only
+  status: question_template_only
+- id: B034
+  scenario_id: S01
+  difficulty: advanced
+  question_template: Produce an evidence-cited end-to-end nominal mission narrative
+  figure_ids:
+  - FIG-02
+  - FIG-04
+  - FIG-09
+  required_channel_ids:
+  - seq_phase_id
+  - hlt_overall_state
+  document_sections:
+  - SEC-04
+  - SEC-06
+  - SEC-09
+  requires_figure: true
+  requires_telemetry: true
+  requires_replanning: false
+  ground_truth_source: private_evaluator_only
+  status: question_template_only
+tools:
+- name: find_figure
+  input_required:
+  - query
+  output_required:
+  - matching_figure_ids
+  - ranked_evidence_refs
+  must_do: retrieve registry IDs and captions; no invented figure identifiers
+- name: ask_figure
+  input_required:
+  - figure_id
+  - question
+  output_required:
+  - answer
+  - observations
+  - figure_id
+  - uncertainty
+  - requires_verification
+  must_do: visually ground claims and say when a label is unreadable; do not expose private truth
+- name: get_figure_context
+  input_required:
+  - figure_id
+  output_required:
+  - document_refs
+  - linked_channel_ids
+  - figure_provenance
+  must_do: resolve IDs from canonical registry; do not infer undocumented linkages
+- name: verify_figure_against_data
+  input_required:
+  - figure_id
+  - run_id
+  - claimed_observation
+  output_required:
+  - verified
+  - supporting_data_refs
+  - discrepancies
+  - limitations
+  must_do: check run ID and input-data hash; quant claims must match source data
+quality_gates:
+- id: QG-01
+  name: Canonical schema and reference integrity
+  state: pending_review
+- id: QG-02
+  name: Nominal telemetry semantic consistency
+  state: not_started
+- id: QG-03
+  name: Technical document cross-reference and visual review
+  state: not_started
+- id: QG-04
+  name: Figure-by-figure technical, visual and provenance audit
+  state: not_started
+- id: QG-05
+  name: Anomalous runs and hidden-truth isolation
+  state: not_started
+- id: QG-06
+  name: Cross-modal benchmark evaluation
+  state: not_started

@@ -1,0 +1,146 @@
+[
+  {
+    "event_count": 20,
+    "expected_samples": 1800,
+    "observed_samples": 1800,
+    "run_id": "BM-RUN-0001"
+  },
+  {
+    "event_count": 20,
+    "expected_samples": 1800,
+    "observed_samples": 1800,
+    "run_id": "BM-RUN-0002"
+  },
+  {
+    "event_count": 20,
+    "expected_samples": 1800,
+    "observed_samples": 1800,
+    "run_id": "BM-RUN-0003"
+  },
+  {
+    "event_count": 21,
+    "expected_samples": 1800,
+    "observed_samples": 1800,
+    "run_id": "BM-RUN-0004"
+  },
+  {
+    "event_count": 21,
+    "expected_samples": 1800,
+    "observed_samples": 1800,
+    "run_id": "BM-RUN-0005"
+  },
+  {
+    "event_count": 21,
+    "expected_samples": 1800,
+    "observed_samples": 1800,
+    "run_id": "BM-RUN-0006"
+  },
+  {
+    "event_count": 21,
+    "expected_samples": 1800,
+    "observed_samples": 1800,
+    "run_id": "BM-RUN-0007"
+  },
+  {
+    "event_count": 21,
+    "expected_samples": 1800,
+    "observed_samples": 1800,
+    "run_id": "BM-RUN-0008"
+  },
+  {
+    "event_count": 21,
+    "expected_samples": 1800,
+    "observed_samples": 1800,
+    "run_id": "BM-RUN-0009"
+  },
+  {
+    "event_count": 21,
+    "expected_samples": 1800,
+    "observed_samples": 1750,
+    "run_id": "BM-RUN-0010"
+  },
+  {
+    "event_count": 21,
+    "expected_samples": 1800,
+    "observed_samples": 1746,
+    "run_id": "BM-RUN-0011"
+  },
+  {
+    "event_count": 21,
+    "expected_samples": 1800,
+    "observed_samples": 1742,
+    "run_id": "BM-RUN-0012"
+  },
+  {
+    "event_count": 21,
+    "expected_samples": 1800,
+    "observed_samples": 1800,
+    "run_id": "BM-RUN-0013"
+  },
+  {
+    "event_count": 21,
+    "expected_samples": 1800,
+    "observed_samples": 1800,
+    "run_id": "BM-RUN-0014"
+  },
+  {
+    "event_count": 21,
+    "expected_samples": 1800,
+    "observed_samples": 1800,
+    "run_id": "BM-RUN-0015"
+  },
+  {
+    "event_count": 22,
+    "expected_samples": 1800,
+    "observed_samples": 1800,
+    "run_id": "BM-RUN-0016"
+  },
+  {
+    "event_count": 22,
+    "expected_samples": 1800,
+    "observed_samples": 1800,
+    "run_id": "BM-RUN-0017"
+  },
+  {
+    "event_count": 22,
+    "expected_samples": 1800,
+    "observed_samples": 1800,
+    "run_id": "BM-RUN-0018"
+  },
+  {
+    "event_count": 21,
+    "expected_samples": 1800,
+    "observed_samples": 1800,
+    "run_id": "BM-RUN-0019"
+  },
+  {
+    "event_count": 21,
+    "expected_samples": 1800,
+    "observed_samples": 1800,
+    "run_id": "BM-RUN-0020"
+  },
+  {
+    "event_count": 21,
+    "expected_samples": 1800,
+    "observed_samples": 1800,
+    "run_id": "BM-RUN-0021"
+  },
+  {
+    "event_count": 21,
+    "expected_samples": 1800,
+    "observed_samples": 1800,
+    "run_id": "BM-RUN-0022"
+  },
+  {
+    "event_count": 21,
+    "expected_samples": 1800,
+    "observed_samples": 1800,
+    "run_id": "BM-RUN-0023"
+  },
+  {
+    "event_count": 21,
+    "expected_samples": 1800,
+    "observed_samples": 1800,
+    "run_id": "BM-RUN-0024"
+  }
+]
