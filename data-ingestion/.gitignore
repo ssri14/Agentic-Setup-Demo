@@ -1,0 +1,15 @@
+.env
+secrets/
+artifacts/
+.venv/
+__pycache__/
+.pytest_cache/
+.DS_Store
+_wheels/*
+!_wheels/.gitkeep
+# Missions created later (and their uploads) stay local; the Brahmastra demo inputs are versioned.
+missions/*
+!missions/brahmastra/
+
+_wheels/*
+!_wheels/.gitkeep

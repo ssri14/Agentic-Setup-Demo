@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mission Ingestion</title>
+<style>
+  :root {
+    --ink: #14213d; --ink-2: #3d4a63; --muted: #6b7690; --line: #e2e6ee; --bg: #f4f6fa; --card: #fff;
+    --navy: #0b1d3a; --navy-2: #13294f; --accent: #2f6fde; --accent-soft: #e8f0fd;
+    --ok: #1f9d6b; --ok-soft: #e3f5ee; --warn: #c98a12; --warn-soft: #fbf2df; --down: #d1453b; --down-soft: #fbe7e5;
+    --off: #9aa3b5; --off-soft: #eef0f4; --radius: 10px;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif; color: var(--ink); background: var(--bg); }
+  button { font: inherit; cursor: pointer; }
+  header { background: linear-gradient(180deg, var(--navy), var(--navy-2)); color: #fff; padding: 14px 28px; display: flex; align-items: center; gap: 18px; position: sticky; top: 0; z-index: 5; box-shadow: 0 2px 10px rgba(5,15,35,.25); }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 650; font-size: 17px; letter-spacing: .2px; }
+  .brand small { display: block; font-weight: 400; font-size: 12px; opacity: .65; letter-spacing: 0; }
+  .mission-picker { display: flex; align-items: center; gap: 8px; margin-left: 18px; }
+  .mission-picker label { font-size: 12px; opacity: .7; text-transform: uppercase; letter-spacing: .08em; }
+  select { font: inherit; padding: 7px 30px 7px 11px; border-radius: 8px; border: 1px solid rgba(255,255,255,.25); background: rgba(255,255,255,.08) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23fff'/%3E%3C/svg%3E") no-repeat right 11px center; color: #fff; appearance: none; min-width: 190px; font-weight: 600; }
+  select option { color: var(--ink); }
+  .ghost { background: transparent; border: 1px solid rgba(255,255,255,.3); color: #fff; padding: 7px 12px; border-radius: 8px; }
+  .ghost:hover { background: rgba(255,255,255,.1); }
+  .overall { margin-left: auto; display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px; background: rgba(255,255,255,.08); font-size: 13px; }
+  main { max-width: 1440px; margin: 0 auto; padding: 22px 28px 40px; display: grid; gap: 20px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .09em; color: var(--muted); margin: 0 0 10px; font-weight: 650; display: flex; align-items: center; gap: 10px; }
+  h2 .hint { text-transform: none; letter-spacing: 0; font-weight: 400; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); }
+  .services { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; }
+  .svc { padding: 12px 14px; display: grid; gap: 3px; position: relative; border-left: 4px solid var(--off); transition: transform .1s; }
+  .svc.link:hover { transform: translateY(-1px); box-shadow: 0 3px 12px rgba(20,33,61,.08); cursor: pointer; }
+  .svc.ok { border-left-color: var(--ok); } .svc.warn { border-left-color: var(--warn); } .svc.down { border-left-color: var(--down); }
+  .svc .top { display: flex; align-items: center; gap: 8px; font-weight: 650; }
+  .svc .role { color: var(--muted); font-size: 12px; }
+  .svc .detail { font-size: 12.5px; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .svc .meta { font-size: 11.5px; color: var(--muted); font-family: var(--mono); }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--off); flex: none; }
+  .dot.ok { background: var(--ok); box-shadow: 0 0 0 3px var(--ok-soft); } .dot.warn { background: var(--warn); box-shadow: 0 0 0 3px var(--warn-soft); }
+  .dot.down { background: var(--down); box-shadow: 0 0 0 3px var(--down-soft); animation: pulse 1.6s infinite; }
+  @keyframes pulse { 50% { opacity: .45; } }
+  .pill { font-size: 11px; font-weight: 650; padding: 2px 8px; border-radius: 999px; text-transform: uppercase; letter-spacing: .05em; }
+  .pill.ok { color: var(--ok); background: var(--ok-soft); } .pill.warn { color: var(--warn); background: var(--warn-soft); }
+  .pill.down, .pill.failed, .pill.interrupted { color: var(--down); background: var(--down-soft); } .pill.off { color: var(--muted); background: var(--off-soft); }
+  .pill.complete { color: var(--ok); background: var(--ok-soft); } .pill.running, .pill.loading, .pill.queued { color: var(--accent); background: var(--accent-soft); }
+  .overview { display: grid; grid-template-columns: 330px 1fr; }
+  .mission-info { padding: 18px 20px; border-right: 1px solid var(--line); }
+  .mission-info h3 { margin: 0 0 4px; font-size: 20px; }
+  .mission-info p { margin: 0 0 12px; color: var(--ink-2); }
+  .kv { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; font-size: 12px; }
+  .kv dt { color: var(--muted); } .kv dd { margin: 0; font-family: var(--mono); color: var(--ink-2); }
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); }
+  .stat { padding: 16px 18px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+  .stat:nth-child(4n) { border-right: 0; } .stat:nth-last-child(-n+4) { border-bottom: 0; }
+  .stat .v { font-size: 26px; font-weight: 700; letter-spacing: -.5px; font-variant-numeric: tabular-nums; }
+  .stat .l { color: var(--muted); font-size: 12px; }
+  .stat .s { font-size: 11.5px; color: var(--ink-2); margin-top: 2px; }
+  .work { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+  .drop { margin: 14px; border: 2px dashed #c4cde0; border-radius: var(--radius); padding: 18px; text-align: center; color: var(--muted); transition: all .15s; }
+  .drop.over { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+  .drop strong { color: var(--ink); }
+  .linkbtn { background: none; border: 0; color: var(--accent); padding: 0; font-weight: 600; }
+  table { width: 100%; border-collapse: collapse; }
+  th { text-align: left; font-size: 11.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 650; padding: 8px 14px; border-bottom: 1px solid var(--line); background: #fafbfd; }
+  td { padding: 11px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tr:last-child td { border-bottom: 0; }
+  .fname { font-weight: 600; word-break: break-word; } .fsub { color: var(--muted); font-size: 12px; font-family: var(--mono); }
+  .rev { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 4px; font-size: 12px; }
+  .rev .counts { color: var(--muted); }
+  .tag { font-size: 11px; font-weight: 650; padding: 2px 7px; border-radius: 5px; background: #eef1f6; color: var(--ink-2); }
+  .tag.enriched { background: #efe8fb; color: #6941b8; }
+  .actions { display: flex; gap: 6px; justify-content: flex-end; white-space: nowrap; }
+  .btn { border: 1px solid var(--line); background: #fff; color: var(--ink); padding: 6px 11px; border-radius: 7px; font-weight: 600; font-size: 13px; }
+  .btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn.primary:hover:not(:disabled) { background: #245bc0; color: #fff; }
+  .btn:disabled { opacity: .45; cursor: not-allowed; }
+  .empty { padding: 26px; text-align: center; color: var(--muted); }
+  .telemetry { padding: 14px 16px; display: flex; align-items: center; gap: 14px; border-top: 1px solid var(--line); }
+  .telemetry .bar { flex: 1; }
+  .progress { height: 6px; border-radius: 4px; background: #e9edf4; overflow: hidden; margin-top: 6px; }
+  .progress > i { display: block; height: 100%; background: var(--accent); border-radius: 4px; transition: width .4s; }
+  .progress.indeterminate > i { width: 35% !important; animation: slide 1.2s infinite ease-in-out; }
+  .progress.complete > i { background: var(--ok); } .progress.failed > i, .progress.interrupted > i { background: var(--down); }
+  @keyframes slide { 0% { transform: translateX(-100%); } 100% { transform: translateX(300%); } }
+  .jobs { display: grid; }
+  .job { padding: 12px 14px; border-bottom: 1px solid var(--line); }
+  .job:last-child { border-bottom: 0; }
+  .job .head { display: flex; align-items: center; gap: 8px; }
+  .job .target { font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .job .sub { display: flex; justify-content: space-between; color: var(--muted); font-size: 12px; margin-top: 4px; }
+  .job details { margin-top: 6px; } .job summary { font-size: 12px; color: var(--accent); cursor: pointer; }
+  .job pre { margin: 6px 0 0; padding: 8px 10px; background: #0f1b31; color: #cfd8ea; border-radius: 7px; font: 11.5px/1.5 var(--mono); max-height: 180px; overflow: auto; white-space: pre-wrap; }
+  .job .err { color: var(--down); font-size: 12px; margin-top: 4px; }
+  dialog { border: 0; border-radius: 12px; padding: 0; width: 440px; box-shadow: 0 20px 60px rgba(5,15,35,.35); }
+  dialog::backdrop { background: rgba(11,29,58,.45); }
+  dialog form { padding: 22px; display: grid; gap: 12px; }
+  dialog h3 { margin: 0; }
+  dialog label { display: grid; gap: 4px; font-size: 12.5px; color: var(--ink-2); font-weight: 600; }
+  dialog input, dialog textarea { font: inherit; padding: 8px 10px; border: 1px solid var(--line); border-radius: 7px; font-weight: 400; }
+  dialog .row { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+  .help { font-weight: 400; color: var(--muted); font-size: 12px; }
+  .toast { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%); background: var(--ink); color: #fff; padding: 10px 16px; border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.25); opacity: 0; transition: opacity .2s; pointer-events: none; max-width: 640px; }
+  .toast.show { opacity: 1; } .toast.error { background: var(--down); }
+  .banner { padding: 12px 16px; background: var(--warn-soft); color: #7a5208; border: 1px solid #f0dcae; border-radius: var(--radius); }
+  @media (max-width: 1100px) { .services { grid-template-columns: repeat(3, 1fr); } .work, .overview { grid-template-columns: 1fr; } .mission-info { border-right: 0; border-bottom: 1px solid var(--line); } }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">
+    <svg width="30" height="30" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 2 28 9v14l-12 7-12-7V9z" fill="none" stroke="#7fb0ff" stroke-width="2"/><path d="M16 9l6 3.5v7L16 23l-6-3.5v-7z" fill="#7fb0ff"/></svg>
+    <div>Mission Ingestion<small>Documents · telemetry · stores</small></div>
+  </div>
+  <div class="mission-picker">
+    <label for="mission">Mission</label>
+    <select id="mission"></select>
+    <button class="ghost" id="newMission">+ New mission</button>
+  </div>
+  <div class="overall" id="overall"><span class="dot"></span><span>Checking services…</span></div>
+</header>
+
+<main>
+  <div id="banner"></div>
+  <section>
+    <h2>Services <span class="hint" id="checked"></span></h2>
+    <div class="services" id="services"></div>
+  </section>
+
+  <section>
+    <h2>Mission overview</h2>
+    <div class="card overview">
+      <div class="mission-info" id="missionInfo"></div>
+      <div class="stats" id="stats"></div>
+    </div>
+  </section>
+
+  <section class="work">
+    <div>
+      <h2>Documents <span class="hint" id="docFolder"></span></h2>
+      <div class="card">
+        <div class="drop" id="drop">
+          <strong>Drop PDFs here</strong> or <button class="linkbtn" id="pick">choose files</button><br>
+          <span class="help">Files are saved to this mission's documents folder. Ingest them below.</span>
+          <input type="file" id="fileInput" accept="application/pdf,.pdf" multiple hidden>
+        </div>
+        <table>
+          <thead><tr><th>Document</th><th>Ingested revisions</th><th style="text-align:right">Ingest</th></tr></thead>
+          <tbody id="docs"></tbody>
+        </table>
+        <div id="telemetry"></div>
+      </div>
+    </div>
+    <div>
+      <h2>Ingestion jobs <span class="hint">one at a time</span></h2>
+      <div class="card jobs" id="jobs"></div>
+    </div>
+  </section>
+</main>
+
+<dialog id="dialog">
+  <form method="dialog" id="missionForm">
+    <h3>New mission</h3>
+    <label>Mission ID <input name="id" required pattern="[a-z][a-z0-9_]{1,30}" placeholder="e.g. trishul"><span class="help">Lowercase letters, digits and _. Used for its databases; cannot change later.</span></label>
+    <label>Display name <input name="name" required maxlength="80" placeholder="e.g. Trishul"></label>
+    <label>Description <textarea name="description" rows="3" maxlength="500"></textarea></label>
+    <div class="row"><button class="btn" value="cancel" formnovalidate>Cancel</button><button class="btn primary" value="create">Create mission</button></div>
+  </form>
+</dialog>
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmt = (n) => n == null ? '–' : Number(n).toLocaleString();
+const bytes = (b) => b == null ? '' : b > 2**20 ? (b / 2**20).toFixed(1) + ' MB' : Math.max(1, Math.round(b / 1024)) + ' KB';
+let mission = new URLSearchParams(location.search).get('mission') || localStorage.getItem('mission') || 'brahmastra';
+let vlmOk = false, lastJobsKey = '', busy = false;
+
+function toast(msg, error = false) {
+  const t = $('toast'); t.textContent = msg; t.className = 'toast show' + (error ? ' error' : '');
+  clearTimeout(t._h); t._h = setTimeout(() => t.className = 'toast', error ? 6000 : 3000);
+}
+async function api(path, options = {}) {
+  const r = await fetch(path, options);
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(body.detail || r.statusText);
+  return body;
+}
+
+async function loadHealth() {
+  try {
+    const h = await api('/api/health');
+    $('checked').textContent = 'checked ' + new Date().toLocaleTimeString();
+    vlmOk = h.services.some(s => s.name.startsWith('Vision') && s.status === 'ok');
+    $('services').innerHTML = h.services.map(s => {
+      const label = s.status === 'off' ? (s.required ? 'down' : 'off') : s.status;
+      const offText = !s.required && s.status === 'off' ? 'Not running (optional)' : s.detail;
+      return `<div class="card svc ${label} ${s.url ? 'link' : ''}" ${s.url ? `onclick="window.open('${esc(s.url)}','_blank')" title="Open ${esc(s.url)}"` : ''}>
+        <div class="top"><span class="dot ${label}"></span>${esc(s.name)}</div>
+        <div class="role">${esc(s.role)}</div>
+        <div class="detail" title="${esc(s.detail)}">${esc(offText)}</div>
+        <div class="meta">${s.version ? (/^\d/.test(s.version) ? 'v' : 'rev ') + esc(s.version) + ' · ' : ''}${s.latency_ms} ms</div></div>`;
+    }).join('');
+    const down = h.services.filter(s => s.required && s.status !== 'ok' && s.status !== 'warn');
+    const warn = h.services.filter(s => s.status === 'warn');
+    $('overall').innerHTML = down.length
+      ? `<span class="dot down"></span><span>${down.length} core service${down.length > 1 ? 's' : ''} down</span>`
+      : `<span class="dot ${warn.length ? 'warn' : 'ok'}"></span><span>${warn.length ? 'Core services up · ' + warn.length + ' warning' + (warn.length > 1 ? 's' : '') : 'All core services healthy'}</span>`;
+    $('banner').innerHTML = h.ready ? '' : `<div class="banner">Waiting for the stores to come up: ${esc(h.bootstrap_error)}. This page retries automatically.</div>`;
+    if (h.ready && !$('mission').options.length) await loadMissions();
+  } catch (e) {
+    $('overall').innerHTML = `<span class="dot down"></span><span>Dashboard unreachable</span>`;
+  }
+}
+
+async function loadMissions(select) {
+  const list = await api('/api/missions');
+  if (select) mission = select;
+  if (!list.some(m => m._id === mission)) mission = list[0]._id;
+  $('mission').innerHTML = list.map(m => `<option value="${esc(m._id)}" ${m._id === mission ? 'selected' : ''}>${esc(m.name)}</option>`).join('');
+  localStorage.setItem('mission', mission);
+  history.replaceState(null, '', '?mission=' + encodeURIComponent(mission));
+  await refreshMission();
+}
+
+async function refreshMission() {
+  await Promise.all([loadSummary(), loadDocs(), loadJobs(true)]);
+}
+
+async function loadSummary() {
+  const s = await api(`/api/missions/${mission}/summary`);
+  const m = s.mission, g = s.graph, t = s.telemetry;
+  $('missionInfo').innerHTML = `<h3>${esc(m.name)}</h3><p>${esc(m.description || 'No description')}</p>
+    <dl class="kv"><dt>Mission ID</dt><dd>${esc(m._id)}</dd><dt>MongoDB</dt><dd>${esc(s.stores.mongo_database)}</dd>
+    <dt>InfluxDB</dt><dd>${esc(s.stores.influx_database)}</dd><dt>Qdrant</dt><dd>${esc(s.stores.qdrant_collection)}</dd>
+    <dt>Neo4j</dt><dd>mission = '${esc(m._id)}'</dd></dl>`;
+  const graphNodes = Object.values(g).reduce((a, b) => a + b, 0);
+  const tiles = [
+    ['Documents', s.documents.complete, `${s.documents.enriched} VLM-enriched · ${s.documents.revisions} revisions${s.documents.failed ? ` · ${s.documents.failed} failed` : ''}`],
+    ['Sections', s.mongo.sections, 'MongoDB'],
+    ['Chunks', s.mongo.chunks, `${fmt(s.mongo.assets)} assets`],
+    ['Vectors', s.vectors, 'Qdrant'],
+    ['Graph nodes', graphNodes, Object.entries(g).map(([k, v]) => `${k} ${fmt(v)}`).join(' · ') || 'Neo4j'],
+    ['Telemetry runs', t.supported ? t.complete_runs : '–', t.supported ? `${t.folder_runs} in folder` : 'No telemetry schema'],
+    ['Telemetry samples', t.supported ? t.records : '–', 'InfluxDB'],
+    ['Events', t.supported ? t.events : '–', 'InfluxDB'],
+  ];
+  $('stats').innerHTML = tiles.map(([l, v, sub]) => `<div class="stat"><div class="v">${typeof v === 'number' ? fmt(v) : v}</div><div class="l">${l}</div><div class="s">${esc(sub)}</div></div>`).join('');
+  $('telemetry').innerHTML = t.supported ? `<div class="telemetry"><div class="bar"><strong>Telemetry</strong>
+      <div class="help">${t.complete_runs} of ${t.folder_runs} run folders ingested · validated against the Brahmastra RC1 schema</div></div>
+      <button class="btn" ${busy || !t.folder_runs ? 'disabled' : ''} onclick="ingestTelemetry()">${t.complete_runs ? 'Re-validate & load runs' : 'Ingest runs'}</button></div>` : '';
+}
+
+async function loadDocs() {
+  const d = await api(`/api/missions/${mission}/documents`);
+  $('docFolder').textContent = d.files.length ? `${d.files.length} file${d.files.length > 1 ? 's' : ''}` : '';
+  if (!d.files.length) { $('docs').innerHTML = `<tr><td colspan="3" class="empty">No documents yet. Drop a PDF above to add one.</td></tr>`; return; }
+  $('docs').innerHTML = d.files.map(f => {
+    const revs = f.revisions.length ? f.revisions.map(r => `<div class="rev">
+        <span class="tag ${r.extraction_status === 'enriched' ? 'enriched' : ''}">${r.extraction_status === 'enriched' ? 'VLM-enriched' : 'Native'}</span>
+        <span class="pill ${esc(r.status)}">${esc(r.status)}</span>
+        <span class="counts">${r.status === 'complete' ? `${fmt(r.pages)} pages · ${fmt(r.sections)} sections · ${fmt(r.chunks)} chunks` : esc(r.error_type || '')}</span></div>`).join('')
+      : '<span class="help">Not ingested</span>';
+    const file = esc(JSON.stringify(f.file));
+    const actions = f.missing_source ? '<span class="help">Source file removed</span>' : `
+      <button class="btn" ${busy ? 'disabled' : ''} onclick='ingest(${file}, false)' title="PyMuPDF text and native tables">Ingest</button>
+      <button class="btn primary" ${busy || !vlmOk ? 'disabled' : ''} onclick='ingest(${file}, true)' title="${vlmOk ? 'Also send each page to the vision model' : 'Vision model unavailable'}">Ingest + VLM</button>`;
+    return `<tr><td><div class="fname">${esc(f.file)}</div><div class="fsub">${bytes(f.bytes)}${f.sha256 ? ' · ' + f.sha256.slice(0, 10) : ''}</div></td>
+      <td>${revs}</td><td><div class="actions">${actions}</div></td></tr>`;
+  }).join('');
+}
+
+async function loadJobs(force) {
+  let jobs;
+  try { jobs = await api(`/api/jobs?mission=${mission}`); } catch { return; }
+  const wasBusy = busy;
+  busy = jobs.some(j => j.status === 'queued' || j.status === 'running');
+  const key = JSON.stringify(jobs.map(j => [j.id, j.status, j.stage, j.current, j.log.length]));
+  if (key !== lastJobsKey || force) {
+    lastJobsKey = key;
+    const open = new Set([...document.querySelectorAll('.job details[open]')].map(d => d.dataset.id));
+    $('jobs').innerHTML = jobs.length ? jobs.map(j => {
+      const pct = j.total ? Math.round(100 * (j.current || 0) / j.total) : (j.status === 'complete' ? 100 : 0);
+      const indeterminate = j.status === 'running' && (j.total == null || j.current == null);
+      const label = j.kind === 'document' ? (j.options && j.options.enrich ? 'VLM ingestion' : 'Native ingestion') : 'Telemetry';
+      const when = j.finished_at || j.started_at || j.created_at;
+      return `<div class="job"><div class="head"><span class="pill ${esc(j.status)}">${esc(j.status)}</span>
+          <span class="target" title="${esc(j.target)}">${esc(j.target)}</span><span class="help">${label}</span></div>
+        <div class="progress ${indeterminate ? 'indeterminate' : ''} ${esc(j.status)}"><i style="width:${j.status === 'complete' ? 100 : pct}%"></i></div>
+        <div class="sub"><span>${esc(j.stage)}${j.total && j.current != null && j.status === 'running' ? ` · ${j.current}/${j.total}` : ''}</span><span>${when ? new Date(when).toLocaleTimeString() : ''}</span></div>
+        ${j.error ? `<div class="err">${esc(j.error)}</div>` : ''}
+        ${j.log.length ? `<details data-id="${j.id}" ${open.has(j.id) ? 'open' : ''}><summary>Log</summary><pre>${esc(j.log.join('\n'))}</pre></details>` : ''}</div>`;
+    }).join('') : '<div class="empty">No ingestion jobs for this mission yet.</div>';
+  }
+  if (wasBusy && !busy) { await Promise.all([loadSummary(), loadDocs()]); toast('Ingestion finished'); }
+  else if (wasBusy !== busy) { await Promise.all([loadSummary(), loadDocs()]); }
+}
+
+async function ingest(file, enrich) {
+  try {
+    await api(`/api/missions/${mission}/ingest`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({file, enrich})});
+    toast(`Queued ${file}`); await loadJobs(true);
+  } catch (e) { toast(e.message, true); }
+}
+async function ingestTelemetry() {
+  try { await api(`/api/missions/${mission}/telemetry`, {method: 'POST'}); toast('Telemetry ingestion queued'); await loadJobs(true); }
+  catch (e) { toast(e.message, true); }
+}
+async function upload(files) {
+  const pdfs = [...files].filter(f => f.name.toLowerCase().endsWith('.pdf'));
+  if (!pdfs.length) return toast('Only PDF files can be added', true);
+  const form = new FormData(); pdfs.forEach(f => form.append('files', f));
+  try {
+    const r = await api(`/api/missions/${mission}/documents`, {method: 'POST', body: form});
+    toast(`Added ${r.saved.map(s => s.file).join(', ')}`); await loadDocs();
+  } catch (e) { toast(e.message, true); }
+}
+
+const drop = $('drop');
+['dragenter', 'dragover'].forEach(e => drop.addEventListener(e, ev => { ev.preventDefault(); drop.classList.add('over'); }));
+['dragleave', 'drop'].forEach(e => drop.addEventListener(e, ev => { ev.preventDefault(); drop.classList.remove('over'); }));
+drop.addEventListener('drop', ev => upload(ev.dataTransfer.files));
+$('pick').onclick = () => $('fileInput').click();
+$('fileInput').onchange = (ev) => { upload(ev.target.files); ev.target.value = ''; };
+$('mission').onchange = (ev) => { mission = ev.target.value; localStorage.setItem('mission', mission); history.replaceState(null, '', '?mission=' + encodeURIComponent(mission)); lastJobsKey = ''; refreshMission().catch(e => toast(e.message, true)); };
+$('newMission').onclick = () => { $('missionForm').reset(); $('dialog').showModal(); };
+$('dialog').addEventListener('close', async () => {
+  if ($('dialog').returnValue !== 'create') return;
+  const f = new FormData($('missionForm'));
+  try {
+    const m = await api('/api/missions', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(Object.fromEntries(f))});
+    toast(`Created mission ${m.name}`); await loadMissions(m._id);
+  } catch (e) { toast(e.message, true); }
+});
+
+loadHealth();
+setInterval(loadHealth, 15000);
+setInterval(() => { if ($('mission').options.length) loadJobs(false); }, 2000);
+</script>
+</body>
+</html>

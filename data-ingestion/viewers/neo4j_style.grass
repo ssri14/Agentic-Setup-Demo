@@ -1,0 +1,67 @@
+node {
+  diameter: 40px;
+  color: #A5ABB6;
+  border-color: #9AA1AC;
+  border-width: 2px;
+  text-color-internal: #FFFFFF;
+  font-size: 10px;
+}
+relationship {
+  color: #A5ABB6;
+  shaft-width: 1px;
+  font-size: 8px;
+  padding: 3px;
+  text-color-external: #000000;
+  text-color-internal: #FFFFFF;
+  caption: "<type>";
+}
+node.Document {
+  color: #1F3A5F;
+  border-color: #142840;
+  diameter: 70px;
+  caption: "{name}";
+}
+node.Section {
+  color: #2E7D6B;
+  border-color: #1F5A4D;
+  diameter: 58px;
+  caption: "{label}";
+}
+node.Chunk {
+  color: #C9CED6;
+  border-color: #A5ABB6;
+  text-color-internal: #333333;
+  diameter: 26px;
+  caption: "{kind}";
+}
+node.Asset {
+  color: #E3B23C;
+  border-color: #B98E25;
+  diameter: 24px;
+  caption: "{kind}";
+}
+node.Entity {
+  color: #C8553D;
+  border-color: #9C3F2C;
+  diameter: 44px;
+  caption: "{name}";
+}
+relationship.NEXT {
+  color: #2E7D6B;
+  shaft-width: 3px;
+}
+relationship.REFERS_TO {
+  color: #1F3A5F;
+  shaft-width: 2px;
+}
+relationship.RELATED_SEMANTIC {
+  color: #7B61A8;
+  shaft-width: 2px;
+}
+relationship.RELATED_KEYWORD {
+  color: #B07AA1;
+  shaft-width: 1px;
+}
+relationship.MENTIONS {
+  color: #C8553D;
+}

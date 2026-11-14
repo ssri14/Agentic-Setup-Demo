@@ -1,0 +1,9 @@
+.DS_Store
+node_modules/
+dist/
+__pycache__/
+.pytest_cache/
+.venv/
+*.log
+# Local credentials and generated artifacts are never committed (see data-ingestion/.gitignore).
+.env

@@ -1,0 +1,20 @@
+{
+  "agent_visible_only": true,
+  "duration_s": 900.0,
+  "event_count": 20,
+  "events_sha256": "da571626022300f64a7bbe67628b03faa2a896fb6abbe362e3dded47b9d09b56",
+  "expected_samples": 1800,
+  "generator_version": "RC1.0.0",
+  "interpretation": "source timestamps are acquisition clock; received timestamps may be later for communication/log issues",
+  "model_kind": "fictional_non_operational_telemetry",
+  "observed_samples": 1800,
+  "registry_sha256": "c886262671a710e98e575a88c5fbccbf12457471a946a360ecb60ddad6e2cc1f",
+  "run_id": "BM-RUN-0003",
+  "sampling_hz": 2,
+  "source": "SYNTHETIC",
+  "source_time_max": "2026-01-01T00:14:59.500Z",
+  "source_time_min": "2026-01-01T00:00:00.000Z",
+  "spec_id": "BRAHMASTRA-FICTIONAL-MULTIMODAL",
+  "spec_version": "1.1.0-rc1",
+  "telemetry_sha256": "7919477f2bbd56f10f163bfe886493fc3cab19e10c41c9aa4727f746a307bead"
+}

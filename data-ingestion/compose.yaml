@@ -1,0 +1,210 @@
+# Mission Analysis stack. Images are published as ${IMAGE_NAMESPACE:-ssri14}/mission-analysis-*:${IMAGE_TAG:-1.0.0}.
+#   Use the published images:  docker compose pull            (then docker compose up -d …)
+#   Build from this checkout:    docker compose build
+# See ../docs/01-infrastructure.md.
+name: brahmastra-ingestion
+services:
+  influxdb:
+    image: influxdb:3.12.2-core
+    command: [influxdb3, serve, --node-id=brahmastra, --object-store=file, --data-dir=/var/lib/influxdb3, --admin-token-file=/run/secrets/influx_admin]
+    secrets: [influx_admin]
+    ports: ["127.0.0.1:${INFLUX_PORT:-8181}:8181"]
+    volumes: [influx_data:/var/lib/influxdb3]
+    restart: unless-stopped
+  neo4j:
+    image: neo4j:5.26.0-community
+    environment:
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:?Run python3 scripts/setup.py first}
+      NEO4J_server_memory_heap_initial__size: 256m
+      NEO4J_server_memory_heap_max__size: 768m
+      NEO4J_server_memory_pagecache_size: 256m
+    ports: ["127.0.0.1:${NEO4J_HTTP_PORT:-7474}:7474", "127.0.0.1:${NEO4J_BOLT_PORT:-7687}:7687"]
+    volumes: [neo4j_data:/data]
+    healthcheck:
+      test: [CMD-SHELL, 'cypher-shell -u neo4j -p "$${NEO4J_AUTH#neo4j/}" "RETURN 1" >/dev/null 2>&1']
+      interval: 10s
+      timeout: 10s
+      retries: 30
+    restart: unless-stopped
+  mongo:
+    image: mongo:8.0.4
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ingestion
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD:?Run python3 scripts/setup.py first}
+    ports: ["127.0.0.1:${MONGO_PORT:-27017}:27017"]
+    volumes: [mongo_data:/data/db]
+    healthcheck:
+      test: [CMD-SHELL, 'mongosh --quiet --eval "quit(db.adminCommand({ping:1}).ok ? 0 : 1)"']
+      interval: 10s
+      timeout: 10s
+      retries: 30
+    restart: unless-stopped
+  qdrant:
+    image: qdrant/qdrant:v1.13.4
+    ports: ["127.0.0.1:${QDRANT_PORT:-6333}:6333"]
+    volumes: [qdrant_data:/qdrant/storage]
+    restart: unless-stopped
+  ingest:
+    build: .
+    image: ${IMAGE_NAMESPACE:-ssri14}/mission-analysis-ingestion:${IMAGE_TAG:-1.0.0}
+    profiles: [cli]
+    env_file: .env
+    environment:
+      INFLUX_URL: http://influxdb:8181
+      INFLUX_TOKEN_FILE: /run/secrets/influx_admin
+      NEO4J_URI: bolt://neo4j:7687
+      QDRANT_URL: http://qdrant:6333
+      MONGO_HOST: mongo
+      MISSIONS_ROOT: /missions
+      ARTIFACT_ROOT: /artifacts
+      HF_HOME: /models
+    secrets: [influx_admin]
+    volumes:
+      - ./missions:/missions:ro
+      - ./artifacts:/artifacts
+      - model_cache:/models
+    depends_on:
+      qdrant: {condition: service_started}
+      influxdb: {condition: service_started}
+      neo4j: {condition: service_healthy}
+      mongo: {condition: service_healthy}
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    command: [--help]
+  # Ingestion dashboard: service health, missions, PDF upload and ingestion jobs.
+  dashboard:
+    image: ${IMAGE_NAMESPACE:-ssri14}/mission-analysis-ingestion:${IMAGE_TAG:-1.0.0}
+    build: .
+    entrypoint: [python, -m, ingestion.dashboard]
+    env_file: .env
+    environment:
+      INFLUX_URL: http://influxdb:8181
+      INFLUX_TOKEN_FILE: /run/secrets/influx_admin
+      NEO4J_URI: bolt://neo4j:7687
+      QDRANT_URL: http://qdrant:6333
+      MONGO_HOST: mongo
+      MISSIONS_ROOT: /missions
+      ARTIFACT_ROOT: /artifacts
+      HF_HOME: /models
+    secrets: [influx_admin]
+    volumes:
+      - ./missions:/missions
+      - ./artifacts:/artifacts
+      - model_cache:/models
+    ports: ["127.0.0.1:${DASHBOARD_PORT:-8090}:8090"]
+    networks: [default, sandbox]
+    depends_on:
+      qdrant: {condition: service_started}
+      influxdb: {condition: service_started}
+      neo4j: {condition: service_healthy}
+      mongo: {condition: service_healthy}
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    restart: unless-stopped
+  # Mission Analysis Agent web app (../mission-analysis-agent): http://localhost:8095
+  agent-web:
+    image: ${IMAGE_NAMESPACE:-ssri14}/mission-analysis-agent:${IMAGE_TAG:-1.0.0}
+    build: ../mission-analysis-agent
+    environment:
+      MONGO_HOST: mongo
+      AGENT_MONGO_PASSWORD: ${AGENT_MONGO_PASSWORD:?Run python3 scripts/setup.py first}
+      AGENT_ADMIN_USER: ${AGENT_ADMIN_USER:-admin}
+      AGENT_ADMIN_PASSWORD: ${AGENT_ADMIN_PASSWORD:?Run python3 scripts/setup.py first}
+      # Mission tools: read-only access to the stores, query embeddings and the analysis sandbox.
+      INFLUX_URL: http://influxdb:8181
+      INFLUX_TOKEN: ${INFLUX_TOKEN:?Run python3 scripts/setup.py first}
+      QDRANT_URL: http://qdrant:6333
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD}
+      EMBED_URL: http://dashboard:8090/api/embed
+      SANDBOX_URL: http://analysis-sandbox:8097
+      # Language models for the agent: the LAN server, and optionally OpenRouter and Groq.
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      LLM_MODEL: ${LLM_MODEL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GROQ_MODEL: ${GROQ_MODEL:-}
+      # Per-question limits (defaults: 48 tool calls, 5 replans, 100 model calls, 15 minutes)
+      AGENT_MAX_TOOL_CALLS: ${AGENT_MAX_TOOL_CALLS:-48}
+      AGENT_MAX_REVISIONS: ${AGENT_MAX_REVISIONS:-5}
+      AGENT_MAX_MODEL_CALLS: ${AGENT_MAX_MODEL_CALLS:-100}
+      AGENT_MAX_MINUTES: ${AGENT_MAX_MINUTES:-15}
+      AGENT_MAX_RETRIES: ${AGENT_MAX_RETRIES:-2}
+    ports: ["127.0.0.1:${AGENT_PORT:-8095}:8095"]
+    networks: [default, sandbox]
+    depends_on:
+      mongo: {condition: service_healthy}
+      neo4j: {condition: service_healthy}
+      dashboard: {condition: service_started}
+      analysis-sandbox: {condition: service_started}
+    restart: unless-stopped
+  # Runs model-written analysis code. Only reachable on the internal sandbox network, which has no route out.
+  analysis-sandbox:
+    image: ${IMAGE_NAMESPACE:-ssri14}/mission-analysis-sandbox:${IMAGE_TAG:-1.0.0}
+    build: ../mission-analysis-agent/sandbox
+    networks: [sandbox]
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 128
+    mem_limit: 2g
+    restart: unless-stopped
+  # One-time: creates the least-privilege MongoDB user the agent app connects as.
+  agent-provision:
+    image: ${IMAGE_NAMESPACE:-ssri14}/mission-analysis-agent:${IMAGE_TAG:-1.0.0}
+    build: ../mission-analysis-agent
+    profiles: [setup]
+    entrypoint: [node, dist/server/provision.js]
+    environment:
+      MONGO_HOST: mongo
+      MONGO_ADMIN_PASSWORD: ${MONGO_PASSWORD}
+      AGENT_MONGO_PASSWORD: ${AGENT_MONGO_PASSWORD:?Run python3 scripts/setup.py first}
+    depends_on:
+      mongo: {condition: service_healthy}
+  # --- Optional read-only browser viewers: docker compose --profile viewers up -d ---
+  mongo-viewer:
+    image: mongo-express:1.0.2
+    profiles: [viewers]
+    environment:
+      ME_CONFIG_MONGODB_URL: mongodb://ingestion:${MONGO_PASSWORD}@mongo:27017/?authSource=admin
+      ME_CONFIG_MONGODB_ENABLE_ADMIN: "true"
+      ME_CONFIG_OPTIONS_READONLY: "true"
+      ME_CONFIG_OPTIONS_NO_DELETE: "true"
+      ME_CONFIG_OPTIONS_FULLWIDTH_LAYOUT: "true"
+      ME_CONFIG_DOCUMENTS_PER_PAGE: "25"
+      ME_CONFIG_BASICAUTH: "true"
+      ME_CONFIG_BASICAUTH_ENABLED: "true"
+      ME_CONFIG_BASICAUTH_USERNAME: viewer
+      ME_CONFIG_BASICAUTH_PASSWORD: ${VIEWER_PASSWORD:?Run python3 scripts/setup.py first}
+      ME_CONFIG_SITE_COOKIESECRET: ${VIEWER_SESSION_SECRET:?Run python3 scripts/setup.py first}
+      ME_CONFIG_SITE_SESSIONSECRET: ${VIEWER_SESSION_SECRET:?Run python3 scripts/setup.py first}
+    ports: ["127.0.0.1:${MONGO_VIEWER_PORT:-8081}:8081"]
+    depends_on:
+      mongo: {condition: service_healthy}
+    restart: unless-stopped
+  influx-explorer:
+    image: influxdata/influxdb3-ui:1.11.2
+    profiles: [viewers]
+    # Default query mode: read-only querying UI, no database/token administration.
+    environment:
+      SESSION_SECRET_KEY: ${VIEWER_SESSION_SECRET:?Run python3 scripts/setup.py first}
+    volumes:
+      - ./secrets/explorer:/app-root/config:ro
+      - explorer_db:/db
+    ports: ["127.0.0.1:${INFLUX_EXPLORER_PORT:-8888}:8080"]
+    depends_on: [influxdb]
+    restart: unless-stopped
+networks:
+  sandbox:
+    internal: true
+secrets:
+  influx_admin:
+    file: ./secrets/influx-admin.json
+volumes:
+  influx_data:
+  neo4j_data:
+  mongo_data:
+  qdrant_data:
+  model_cache:
+  explorer_db:
