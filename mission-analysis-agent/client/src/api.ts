@@ -43,6 +43,8 @@ export interface Report {
   workflow?: string[];
   /** Citations whose wording did not match the source although the facts are there (1.0.6+); reported, not a confidence cap. */
   provenance?: string[];
+  /** The conclusion holds only the verified claims; the rest are listed under uncertainties (1.0.10+). */
+  partial?: boolean;
   claims?: CheckedClaim[]; checks?: { rounds: number; checker: 'ok' | 'failed' | 'skipped'; supported: number; total: number };
 }
 /** 'unsupported' appears in answers saved by 1.0.2–1.0.3 and means 'insufficient'. */

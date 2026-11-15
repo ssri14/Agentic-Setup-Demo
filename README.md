@@ -97,7 +97,7 @@ Technical references: [`data-ingestion/README.md`](data-ingestion/README.md), [`
 | `ssri14/mission-analysis-agent` | `mission-analysis-agent/` |
 | `ssri14/mission-analysis-sandbox` | `mission-analysis-agent/sandbox/` |
 
-Tags: `1.0.9` (current), earlier versions, and `latest`, for `linux/amd64` and `linux/arm64`. Compose uses `IMAGE_NAMESPACE` and `IMAGE_TAG` from `.env`. To publish, see [Guide 1 → Publishing images](docs/01-infrastructure.md#publishing-images).
+Tags: `1.0.10` (current), earlier versions, and `latest`, for `linux/amd64` and `linux/arm64`. Compose uses `IMAGE_NAMESPACE` and `IMAGE_TAG` from `.env`. To publish, see [Guide 1 → Publishing images](docs/01-infrastructure.md#publishing-images).
 
 ## Not in this repository
 

@@ -398,16 +398,23 @@ describe('claim check (document evidence interpretation)', () => {
     expect(r.checks).toMatchObject({ supported: 2, total: 2, rounds: 2 });
   });
 
-  it('caps confidence and flags the claim when it still cannot be verified', async () => {
+  it('never publishes a contradicted claim as the answer when it still cannot be verified (negative control)', async () => {
     const model = new ScriptedModel({ title: ['{"title":"HLT purpose and dependencies"}'], planner: [hltPlan], verifier: [verified], reporter: [wrongDraft], checker: [strictChecker] });
     const run = await runner(model).start(chat, user, mission, question);
     expect((await settle(run.id)).status).toBe('complete');
     const answer = (await store.messages.list(chat.id)).find((m) => m.role === 'assistant')!;
-    const r = answer.report as { confidence: string; confidence_reason: string; uncertainties: string[]; checks: { rounds: number } };
-    expect(r.checks.rounds).toBe(3);                                      // two rewrites, then published as unverified
+    const r = answer.report as { conclusion: string; partial: boolean; confidence: string; confidence_reason: string; uncertainties: string[]; claims: { verdict: string }[]; checks: { rounds: number; supported: number; total: number } };
+    expect(r.checks).toMatchObject({ rounds: 3, supported: 0, total: 1 });     // two rewrites, then published without it
+    expect(r.claims.map((c) => c.verdict)).toEqual(['contradicted']);       // the red check stays visible
     expect(r.confidence).toBe('low');
     expect(r.confidence_reason).toMatch(/lowered from high: 1 claim\(s\) contradicted by the evidence/);
-    expect(answer.text).toMatch(/Not verified against the evidence:\*\* HLT depends on DAQ, COM and SUP \(contradicted by E\d+\)/);
+    expect(r.partial).toBe(true);
+    expect(answer.text).toBe(r.conclusion);
+    expect(answer.text).toMatch(/^\*\*The evidence gathered does not verify an answer to this question\.\*\*/);
+    expect(answer.text).not.toContain('DAQ, COM and SUP');
+    expect(r.uncertainties).toContainEqual(expect.stringMatching(/^Contradicted by E\d+, omitted from the answer: HLT depends on DAQ, COM and SUP$/));
+    const events = await store.events.list(run.id);
+    expect(events.find((e) => e.type === 'answer_withheld')!.payload).toMatchObject({ draft_conclusion: expect.stringContaining('depends on DAQ, COM and SUP') });
   });
 
   it('reports a mis-worded quotation as a provenance note, without lowering confidence, when the facts are in the evidence', async () => {
@@ -762,5 +769,176 @@ describe('claim check on a comparison across runs (observed: BM-RUN-0001 versus 
     await settle(run.id);
     const r = (await store.messages.list(chat.id)).find((m) => m.role === 'assistant')!.report as { claims: { verdict: string; explanation: string }[] };
     expect(r.claims[0]).toMatchObject({ verdict: 'insufficient', explanation: expect.stringContaining('BM-RUN-0016 is not in the cited evidence (E1)') });
+  });
+});
+
+// ---------------- 1.0.10 final brief: published answers contain only verified findings ----------------
+describe('final brief (1.0.10): what the published answer may contain', () => {
+  // BM-RUN-0016 source records (telemetry.csv / events.jsonl) at the times the brief verified.
+  const t16: Record<string, unknown>[] = [
+    [300, 0.7496, 0.4626, 0, 'NOMINAL'], [352.5, 0.4118, 0.4602, 1, 'WARNING'], [360, 0.2807, 0.4775, 1, 'WARNING'],
+    [371, 0.2820, 0.5171, 2, 'DEGRADED'], [380, 0.2802, 0.5423, 2, 'DEGRADED'], [456, 0.2751, 0.5407, 2, 'DEGRADED'],
+  ].map(([t, m, c, w, s]) => ({ sample_index: Number(t) * 2, mission_elapsed_s: t, delivery_state: 'DELIVERED', received_time_utc: null, pwr_margin_pu: m, thm_core_temp_pu: c, hlt_warning_count: w, hlt_overall_state: s }));
+  const e16: Record<string, unknown>[] = [
+    { event_seq: 7, mission_elapsed_s: 352.5, source_time_utc: '2026-01-01T00:05:52.500Z', received_time_utc: '2026-01-01T00:05:52.600Z', subsystem_id: 'PWR', type: 'PWR_WARNING_OBSERVED', message: 'Power margin warning observed' },
+    { event_seq: 8, mission_elapsed_s: 371, source_time_utc: '2026-01-01T00:06:11.000Z', received_time_utc: '2026-01-01T00:06:11.100Z', subsystem_id: 'THM', type: 'THM_WARNING_OBSERVED', message: 'Thermal warning observed' },
+  ];
+  beforeEach(() => {
+    const fake = fakeSources({ timeseries: { async query(_db, sql, params) {
+      if (params.dataset !== 'dataset-16') return [];
+      const cols = /SELECT ([\s\S]+?)\s+FROM/.exec(sql)![1].split(',').map((c) => c.trim().replaceAll('"', ''));
+      const rows = /FROM mission_events/.test(sql) ? e16 : t16;
+      return rows.filter((r) => Number(r.mission_elapsed_s) >= Number(params.start) && Number(r.mission_elapsed_s) < Number(params.end))
+        .map((r) => Object.fromEntries(cols.map((c) => [c, (r[c] ?? null) as never])));
+    } } });
+    const m01 = (fake.data.telemetry_runs as Record<string, unknown>[]).find((r) => r.run_id === 'BM-RUN-0001')!;
+    (fake.data.telemetry_runs as Record<string, unknown>[]).push({ ...m01, _id: 'dataset-16', run_id: 'BM-RUN-0016', manifest: { ...(m01.manifest as object), run_id: 'BM-RUN-0016' } });
+    sources = fake.sources;
+  });
+  type Published = { conclusion: string; partial?: boolean; confidence: string; confidence_reason: string; uncertainties: string[]; rejected_alternatives: { hypothesis: string; reason: string }[];
+    claims: { id: string; text: string; verdict: string; explanation: string }[]; checks: { rounds: number; supported: number; total: number } };
+  const idOf = (prompt: string, text: string) => [...prompt.matchAll(/^(E\d+) \[/gm)].map((x) => x[1]).find((id) => evidenceLines(prompt, id).some((l) => l.includes(text)));
+  const verifiedAll = JSON.stringify({ verdicts: [{ hypothesis: 'H1', status: 'supported', confidence: 'high', evidence_for: [], note: 'see evidence' }], next: 'report', reason: 'answered' });
+  const investigate = async (plan: object, reporter: Reply, checker?: Reply) => {
+    const model = new ScriptedModel({ title: ['{"title":"BM-RUN-0016"}'], planner: [JSON.stringify(plan)], verifier: [verifiedAll], reporter: [reporter], ...(checker ? { checker: [checker] } : {}) });
+    const run = await runner(model).start(chat, user, mission, 'How did power, temperature and health warnings evolve in BM-RUN-0016 between 300 and 456 s?');
+    const done = await settle(run.id);
+    expect(done.status, done.error).toBe('complete');
+    const msg = (await store.messages.list(chat.id)).find((m) => m.role === 'assistant')!;
+    return { text: msg.text, r: msg.report as Published, model, runId: run.id };
+  };
+  /** The published answer must not contradict its own check: no rejected statement among the findings, confidence low when any was rejected. */
+  const consistent = (text: string, r: Published) => {
+    expect(text).toBe(r.conclusion);
+    const rejected = r.claims.filter((c) => c.verdict === 'contradicted' || c.verdict === 'insufficient');
+    for (const c of rejected) expect(r.conclusion, c.text).not.toContain(c.text.replace(/\.$/, ''));
+    for (const c of rejected) expect(r.uncertainties).toContainEqual(expect.stringContaining(c.text));
+    expect(r.checks.supported).toBe(r.claims.filter((c) => c.verdict === 'supported').length);
+    if (rejected.length) { expect(r.partial).toBe(true); expect(r.confidence).toBe('low'); } else expect(r.partial).toBe(false);
+  };
+
+  it('1. withholds wrong numerical trends that cite only channel definitions, across all three drafts', async () => {
+    const plan = { objective: 'Evolution of power, temperature and warnings', hypotheses: [{ id: 'H1', statement: 'Power margin fell before the thermal rise in BM-RUN-0016' }],
+      steps: [{ id: 'S1', title: 'Channel definitions', tasks: [{ id: 'S1.1', tool: 'lookup_channels', args: { channels: ['pwr_margin_pu', 'thm_core_temp_pu', 'hlt_warning_count'] }, purpose: 'meanings' }] }] };
+    const wrong = [
+      'In BM-RUN-0016 pwr_margin_pu fell from about 0.78 to 0.45 between 300 and 360 s',
+      'In BM-RUN-0016 thm_core_temp_pu rose from 0.30 to 0.62 between 360 and 380 s',
+      'In BM-RUN-0016 hlt_warning_count went from 0 to 3 after 380 s',
+    ];
+    let drafts = 0;
+    const reporter: Reply = (m) => {
+      drafts++;
+      const ch = idOf(m[1].content, 'pwr_margin_pu')!;
+      return JSON.stringify({ conclusion: `Power margin fell from about 0.78 to 0.45 (300-360 s), core temperature rose from 0.30 to 0.62 (360-380 s) and warnings went from 0 to 3 after 380 s [${ch}].`,
+        confidence: 'high', confidence_reason: 'clear trends', evidence: [ch],
+        rejected_alternatives: [{ hypothesis: 'A thermal fault came first', reason: 'temperature stayed at 0.30 until 360 s' }, { hypothesis: 'The warnings are delivery artefacts', reason: 'the documents define them as observed warnings' }],
+        uncertainties: ['Warnings may have peaked above 3 after 0.62 temperature'],
+        claims: [...wrong.map((text, i) => ({ id: `C${i + 1}`, text, evidence: [ch], quote: 'pwr_margin_pu' })),
+          { id: 'C4', text: 'pwr_margin_pu is a channel of the PWR subsystem', evidence: [ch], quote: 'pwr_margin_pu' }] });
+    };
+    const { text, r, runId } = await investigate(plan, reporter);       // the default checker calls everything "supported"
+    expect(drafts).toBe(3);
+    expect(r.checks.rounds).toBe(3);
+    expect(r.claims.slice(0, 3).map((c) => c.verdict)).toEqual(['insufficient', 'insufficient', 'insufficient']);
+    for (const c of r.claims.slice(0, 3)) expect(c.explanation).toMatch(/states a measured value at a time but cites no measurement \(E\d+: channel\)/);
+    consistent(text, r);
+    expect(text).toMatch(/^\*\*Partial answer: only the findings verified against the evidence are shown\.\*\* 3 statements of the draft could not be verified/);
+    for (const n of ['0.78', '0.45', '0.30', '0.62', 'from 0 to 3']) expect(text).not.toContain(n);
+    expect(r.rejected_alternatives).toEqual([{ hypothesis: 'The warnings are delivery artefacts', reason: 'the documents define them as observed warnings' }]);
+    expect(r.uncertainties.join('\n')).not.toContain('peaked above 3');
+    expect(r.uncertainties.filter((u) => u.startsWith('Not established by the evidence, omitted from the answer:'))).toHaveLength(3);
+    const withheld = (await store.events.list(runId)).find((e) => e.type === 'answer_withheld')!.payload as { draft_conclusion: string };
+    expect(withheld.draft_conclusion).toContain('0.78 to 0.45');                 // the full draft stays in the replay
+  });
+
+  const windows = [300, 360, 380, 456].map((t, i) => ({ id: `S1.${i + 1}`, tool: 'telemetry_window', args: { run_id: 'BM-RUN-0016', channels: ['pwr_margin_pu', 'thm_core_temp_pu', 'hlt_warning_count', 'hlt_overall_state'], start: t, end: t + 1 }, purpose: `samples at ${t} s` }));
+  const measuredPlan = { objective: 'Measured values', hypotheses: [{ id: 'H1', statement: 'Power margin fell before the thermal rise in BM-RUN-0016' }], steps: [{ id: 'S1', title: 'Samples', tasks: windows }] };
+  const measuredReport = (claims: [number, string][]): Reply => (m) => {
+    const at = (t: number) => idOf(m[1].content, `mission_elapsed_s = ${t};`)!;
+    return JSON.stringify({ conclusion: 'In BM-RUN-0016 the power margin dropped by 360 s, before the core temperature rose (380 s) [E1, E2, E3].', confidence: 'high', confidence_reason: 'measured samples',
+      evidence: [at(300), at(360), at(380)], claims: claims.map(([t, text], i) => ({ id: `C${i + 1}`, text, evidence: [at(t)], quote: '' })) });
+  };
+
+  it('2. supports correct atomic values from measured samples and keeps the answer whole', async () => {
+    const { text, r } = await investigate(measuredPlan, measuredReport([
+      [300, 'BM-RUN-0016 pwr_margin_pu = 0.7496 at 300 s'], [360, 'BM-RUN-0016 pwr_margin_pu = 0.2807 at 360 s'],
+      [380, 'BM-RUN-0016 thm_core_temp_pu = 0.5423 at 380 s'], [380, 'BM-RUN-0016 hlt_warning_count = 2 at 380 s'], [456, 'At 456 s BM-RUN-0016 hlt_overall_state was DEGRADED'],
+    ]));
+    expect(r.claims.map((c) => c.verdict)).toEqual(['supported', 'supported', 'supported', 'supported', 'supported']);
+    consistent(text, r);
+    expect(text).toBe('In BM-RUN-0016 the power margin dropped by 360 s, before the core temperature rose (380 s) [E1, E2, E3].');
+    expect(r.confidence).toBe('high');
+  });
+
+  it('2b and 6. rejects a wrong measured value, and publishes only the verified values', async () => {
+    const { text, r } = await investigate(measuredPlan, measuredReport([
+      [300, 'BM-RUN-0016 pwr_margin_pu = 0.7496 at 300 s'], [360, 'BM-RUN-0016 pwr_margin_pu = 0.45 at 360 s'], [380, 'BM-RUN-0016 hlt_warning_count = 3 at 380 s'],
+    ]));
+    expect(r.claims.map((c) => c.verdict)).toEqual(['supported', 'contradicted', 'contradicted']);
+    consistent(text, r);
+    expect(text).toContain('- BM-RUN-0016 pwr_margin_pu = 0.7496 at 300 s [E');
+    expect(text).not.toContain('0.45');
+    expect(text).not.toContain('dropped by 360 s');                            // the draft's narrative is not published
+    expect(r.uncertainties).toContainEqual(expect.stringMatching(/^Contradicted by E\d+, omitted from the answer: BM-RUN-0016 pwr_margin_pu = 0\.45 at 360 s$/));
+    expect(r.confidence_reason).toMatch(/lowered from high: 2 claim\(s\) contradicted/);
+  });
+
+  it('3. reports a documented dependency and the event order as the best-supported explanation', async () => {
+    const plan = { objective: 'Dependency and event order', hypotheses: [{ id: 'H1', statement: 'THM depends on PWR and the PWR warning precedes the THM warning in BM-RUN-0016' }],
+      steps: [{ id: 'S1', title: 'Dependency and events', tasks: [
+        { id: 'S1.1', tool: 'get_table', args: { contains: 'THM', max_tables: 3 }, purpose: 'THM row of the subsystem reference' },
+        { id: 'S1.2', tool: 'events_window', args: { run_id: 'BM-RUN-0016', start: 340, end: 400 }, purpose: 'warning order' }] }] };
+    const reporter: Reply = (m) => {
+      const row = idOf(m[1].content, 'ID = THM;')!, ev = idOf(m[1].content, 'PWR_WARNING_OBSERVED')!;
+      return JSON.stringify({ conclusion: `The best-supported explanation is shared upstream power: THM depends on PWR [${row}], and the PWR warning (352.5 s) precedes the THM warning (371 s) [${ev}]. The order supports, but does not prove, a physical cause.`,
+        confidence: 'medium', confidence_reason: 'dependency and event order; causality not proven', evidence: [row, ev],
+        claims: [
+          { id: 'C1', text: 'THM depends on PWR', evidence: [row], quote: '', cell: { row: 'THM', column: 'Depends on', value: 'PWR' } },
+          { id: 'C2', text: 'In BM-RUN-0016 PWR raised PWR_WARNING_OBSERVED at 352.5 s', evidence: [ev], quote: '' },
+          { id: 'C3', text: 'In BM-RUN-0016 THM raised THM_WARNING_OBSERVED at 371 s', evidence: [ev], quote: '' }],
+        uncertainties: ['The event order supports but does not prove that the power degradation caused the thermal warning'] });
+    };
+    const { text, r } = await investigate(plan, reporter);
+    expect(r.claims.map((c) => c.verdict)).toEqual(['supported', 'supported', 'supported']);
+    consistent(text, r);
+    expect(text).toContain('best-supported explanation');
+    expect(r.confidence).toBe('medium');
+  });
+
+  it('4. keeps a requirement unsupported when the section only describes the quantities, and publishes what it does say', async () => {
+    const plan = { objective: 'Event record contents', hypotheses: [{ id: 'H1', statement: 'SEC-07 states what event records contain' }],
+      steps: [{ id: 'S1', title: 'Read SEC-07', tasks: [{ id: 'S1.1', tool: 'read_section', args: { section: 'SEC-07' }, purpose: 'event-record pathways' }] }] };
+    const reporter: Reply = (m) => {
+      const sec = idOf(m[1].content, 'The event logger records')!;
+      return JSON.stringify({ conclusion: `Every event-log record must include source timestamp, receipt timestamp, sequence number and backlog [${sec}].`, confidence: 'high', confidence_reason: 'documented', evidence: [sec],
+        claims: [
+          { id: 'C1', text: 'Every event-log record must include source timestamp, receipt timestamp, sequence number, and backlog', evidence: [sec], quote: 'The event logger records sequence numbers and backlog.' },
+          { id: 'C2', text: 'SEC-07 states that the event logger records sequence numbers and backlog', evidence: [sec], quote: 'The event logger records sequence numbers and backlog.' },
+          { id: 'C3', text: 'SEC-07 states that delivery monitoring records can add loss percentage, receipt latency and interruption duration', evidence: [sec], quote: 'Separate delivery monitoring records can add loss percentage, receipt latency and interruption duration.' }] });
+    };
+    // A checker applying the requirement rule of its prompt: a description of what is recorded does not support "must include".
+    const checker: Reply = (m) => {
+      expect(m[0].content).toContain('A claim that states a requirement ("must", "shall", "every record includes") is supported only by a normative statement');
+      return JSON.stringify({ claims: [...m[1].content.matchAll(/^(C\d+): (.*)$/gm)].map(([, id, t]) => /must include/.test(t)
+        ? { id, verdict: 'unsupported', explanation: 'SEC-07 describes separate pathways; it does not require every event record to contain all four fields' }
+        : { id, verdict: 'supported', explanation: 'stated in SEC-07' }), next: 'rewrite', guidance: 'report what SEC-07 says about each pathway' });
+    };
+    const { text, r } = await investigate(plan, reporter, checker);
+    expect(r.claims.map((c) => c.verdict)).toEqual(['insufficient', 'supported', 'supported']);
+    consistent(text, r);
+    expect(text).not.toContain('must include');
+    expect(text).toContain('- SEC-07 states that the event logger records sequence numbers and backlog [E');
+    expect(text).toContain('- SEC-07 states that delivery monitoring records can add loss percentage, receipt latency and interruption duration [E');
+  });
+
+  it('P2 and P3: the planner, verifier, reporter and checker are told what counts as a measurement and as a requirement', async () => {
+    const { model } = await investigate(measuredPlan, measuredReport([[300, 'BM-RUN-0016 pwr_margin_pu = 0.7496 at 300 s']]));
+    const sys = (role: string) => model.calls.find((c) => c.role === role && !c.messages[0].content.startsWith('Write a short title'))!.messages[0].content;
+    expect(sys('planner')).toContain('plan telemetry_window for the named run(s), the time interval(s) and the relevant channels');
+    expect(sys('planner')).toContain('Use lookup_channels only to learn channel names, units and meanings, never as the source of measured values');
+    expect(sys('verifier')).toContain('Do not choose "report" for a question about measured values, trends, onsets or changes over time unless the evidence includes timestamped telemetry samples');
+    expect(sys('reporter')).toContain('never give approximate start or end values, trends or counter changes that no cited sample shows');
+    expect(sys('reporter')).toContain('keep requirements (explicit "must"/"shall" statements), recommended checks and descriptions apart');
+    expect(sys('checker')).toContain('never by a channel definition or by document text describing the quantity');
   });
 });

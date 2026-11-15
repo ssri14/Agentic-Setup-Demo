@@ -26,7 +26,7 @@ import type { Sources } from '../tools/sources.js';
 import { trim } from '../tools/util.js';
 import type { EventSink } from './events.js';
 import { completeJson, type ChatMessage, type ChatModel, type ModelRole } from './llm.js';
-import { MAX_CONTENT, compareSupport, identifiers, plain, cellFound, labelTables, locateSupport, numbersSupported, quoteFound, recordSupport, recordsContent, relatedLines, tableContent, type RecordRow } from './evidence.js';
+import { MAX_CONTENT, compareSupport, identifiers, numbersIn, plain, statesMeasurement, cellFound, labelTables, locateSupport, numbersSupported, quoteFound, recordSupport, recordsContent, relatedLines, tableContent, type RecordRow } from './evidence.js';
 import { analystMessages, checkerMessages, missionBlock, plannerMessages, recoveryMessages, reporterMessages, toolCatalog, verifierMessages, type MissionContext } from './prompts.js';
 import { AnalystOutput, CheckOutput, PlanOutput, ReportOutput, TASK_REF, VerifyOutput, planSchema, recoverSchema, taskRefs, type Claim, type ReportOutput as ReportValue } from './schemas.js';
 
@@ -46,6 +46,8 @@ export interface StepState { id: string; title: string; depends_on: string[]; ta
 export interface PlanVersion { version: number; objective: string; rationale: string; reason?: string; steps: string[] }
 export interface HypothesisState { id: string; statement: string; confirm_if: string; refute_if: string; status: string; confidence: string; rule?: string | null; note?: string; evidence_for: string[]; evidence_against: string[] }
 /** snippet: a short excerpt for the UI. content: the full text the models read and quotes are checked against. */
+/** Evidence kinds that measure what happened in a run (as opposed to documents and definitions). */
+const MEASURED = new Set(['telemetry', 'events', 'analysis']);
 export interface EvidenceItem extends Evidence { id: string; task: string; snippet: string; content?: string; artifact?: string; records?: RecordRow[] }
 /**
  * supported: the evidence establishes the claim (checker) and its support was located in the cited text.
@@ -669,9 +671,12 @@ export function buildAgent(ctx: AgentContext) {
 
     // 1. Deterministic: find the claim's support in the cited evidence text, by exact quote, by table cell,
     //    or (when the wording differs) by locating the row or sentence that carries all its identifiers.
-    type Det = { cited: string[]; matched: SupportMatch; in: string | null; support: string | null; mismatch?: { evidence: string; line: string; detail: string }; absent?: string; unparsed?: string; numbers?: string[] };
+    type Det = { cited: string[]; matched: SupportMatch; in: string | null; support: string | null; mismatch?: { evidence: string; line: string; detail: string }; absent?: string; unparsed?: string; unmeasured?: string; numbers?: string[] };
     const det = draft.claims.map((c): Det => {
       const cited = c.evidence.filter((id) => pool.has(id));
+      // A measured value of a run at a time needs a measurement: a channel definition or document text cannot establish it.
+      if (cited.length && statesMeasurement(c.text) && !cited.some((id) => MEASURED.has(pool.get(id)!.kind)))
+        return { cited, matched: null, in: null, support: null, unmeasured: `states a measured value at a time but cites no measurement (${cited.map((id) => `${id}: ${pool.get(id)!.kind}`).join(', ')}); cite telemetry_window samples or event records` };
       // Several runs (a comparison, or values side by side): joined across all cited records by run ID and exact time.
       const sets = cited.filter((id) => pool.get(id)!.records?.length).map((id) => { const e = pool.get(id)!; return { evidence: id, records: e.records!, start: e.start as number | undefined, end: e.end as number | undefined }; });
       const cmp = sets.length ? compareSupport(c.text, sets) : null;
@@ -722,7 +727,7 @@ export function buildAgent(ctx: AgentContext) {
         const d = det[i];
         const cited = c.cell ? `cell: row "${c.cell.row}", column "${c.cell.column}", value "${c.cell.value}"` : `quote: "${c.quote}"`;
         const status = !d.cited.length ? 'cites no evidence from this run'
-          : d.matched === 'record' ? `record found in ${d.in}: ${d.support}` : d.mismatch ? `RECORD DIFFERS in ${d.mismatch.evidence}: ${d.mismatch.detail}` : d.absent ? `NO RECORD: ${d.absent}` : d.unparsed ? `RECORD CHECK NOT POSSIBLE: ${d.unparsed}`
+          : d.matched === 'record' ? `record found in ${d.in}: ${d.support}` : d.mismatch ? `RECORD DIFFERS in ${d.mismatch.evidence}: ${d.mismatch.detail}` : d.absent ? `NO RECORD: ${d.absent}` : d.unmeasured ? `NO MEASUREMENT CITED: ${d.unmeasured}` : d.unparsed ? `RECORD CHECK NOT POSSIBLE: ${d.unparsed}`
           : d.matched === 'quote' ? `quote found in ${d.in}` : d.matched === 'cell' ? `cell found in ${d.in}: ${d.support}`
           : d.matched === 'located' ? `exact wording not found; the line of ${d.in} that mentions all its identifiers is: ${d.support}` : `SUPPORT NOT FOUND in ${d.cited.join(', ')}`;
         const related = relatedLines(c.text, items);
@@ -751,6 +756,7 @@ export function buildAgent(ctx: AgentContext) {
       // Structured records decide on their own: a different recorded value is a contradiction whatever the checker says.
       if (d.mismatch) { verdict = 'contradicted'; explanation = `${d.mismatch.detail}${explanation ? `; checker: ${explanation}` : ''}`; contradicting.unshift({ evidence: d.mismatch.evidence, quote: d.mismatch.line }); }
       else if (d.absent) { verdict = 'insufficient'; explanation = d.absent; }
+      else if (d.unmeasured) { verdict = 'insufficient'; explanation = `${d.unmeasured}${explanation ? `; checker: ${explanation}` : ''}`; }
       // A matching record proves the values it checked; the rest of the claim's wording needs the checker's agreement.
       else if (d.matched === 'record' && m?.verdict === 'supported') { verdict = 'supported'; explanation = explanation || 'the record states it'; }
       else if (d.matched === 'record' && !m) { verdict = 'unchecked'; explanation = 'the record carries the stated values; the claim checker was not available for the rest of the claim'; }
@@ -832,15 +838,26 @@ export function buildAgent(ctx: AgentContext) {
     const finalState = { ...s, tasks } as State;
 
     const known = new Map(s.evidence.map((e) => [e.id, e]));
-    const notes = [
-      bad.length ? `> **Not verified against the evidence:** ${bad.map((r) => `${r.text} (${r.verdict === 'contradicted' ? `contradicted by ${r.contradicting.map((x) => x.evidence).join(', ')}` : 'not established by the cited evidence'})`).join('; ')}` : '',
-    ].filter(Boolean);
-    const conclusion = notes.length ? `${draft.conclusion}\n\n${notes.join('\n>\n')}` : draft.conclusion;
-    const cited = [...new Set([...draft.evidence, ...results.flatMap((r) => [...r.evidence, ...r.contradicting.map((x) => x.evidence)]), ...(conclusion.match(/E\d+/g) ?? [])])].filter((id) => known.has(id));
+    // A claim the check rejected is never published as a finding. When any remain after the rewrites, the main answer is
+    // built only from the claims that passed (supported, or supported with a citation note, or unchecked for lack of a
+    // checker); the rejected ones are listed under uncertainties; the full draft stays in the replay (answer_drafted).
+    const kept = results.filter((r) => r.verdict === 'supported' || r.verdict === 'validation_error' || r.verdict === 'unchecked');
+    const verifiedNumbers = new Set(kept.flatMap((r) => [...numbersIn(r.text), ...numbersIn(r.support ?? '')]));
+    const onlyVerified = (text: string) => numbersIn(text).every((n) => [...verifiedNumbers].some((v) => Number(v) === Number(n)));
+    const omitted = bad.map((r) => `${r.verdict === 'contradicted' ? `Contradicted by ${r.contradicting.map((x) => x.evidence).join(', ')}` : 'Not established by the evidence'}, omitted from the answer: ${r.text}`);
+    const partial = bad.length > 0;
+    const conclusion = !partial ? draft.conclusion
+      : kept.length
+        ? `**Partial answer: only the findings verified against the evidence are shown.** ${bad.length} statement${bad.length > 1 ? 's' : ''} of the draft could not be verified and ${bad.length > 1 ? 'are' : 'is'} listed under uncertainties.\n\n${kept.map((r) => `- ${r.text.replace(/\s*\.?\s*$/, '')} [${r.evidence.join(', ')}]`).join('\n')}`
+        : `**The evidence gathered does not verify an answer to this question.** The draft's ${bad.length} statement${bad.length > 1 ? 's' : ''} could not be verified and ${bad.length > 1 ? 'are' : 'is'} listed under uncertainties.`;
+    if (partial) await ctx.sink.emit('report', 'answer_withheld', `${bad.length} unverified statement(s) withheld from the answer; ${kept.length} verified kept`,
+      { withheld: bad.map((r) => ({ id: r.id, text: r.text, verdict: r.verdict })), draft_conclusion: draft.conclusion });
+    const cited = [...new Set([...(partial ? kept.flatMap((r) => r.evidence) : draft.evidence), ...results.flatMap((r) => [...r.evidence, ...r.contradicting.map((x) => x.evidence)]), ...(conclusion.match(/E\d+/g) ?? [])])].filter((id) => known.has(id));
     const report = {
-      ...draft, conclusion, confidence,
+      ...draft, conclusion, confidence, partial,
+      rejected_alternatives: partial ? draft.rejected_alternatives.filter((a) => onlyVerified(`${a.hypothesis} ${a.reason}`)) : draft.rejected_alternatives,
       confidence_reason: lowered ? `${draft.confidence_reason} — lowered from ${draft.confidence}: ${why.join('; ')}` : draft.confidence_reason,
-      uncertainties: [...draft.uncertainties, ...bad.map((r) => `${r.verdict === 'contradicted' ? 'Contradicted' : 'Unverified'} claim: ${r.text}`)],
+      uncertainties: [...(partial ? draft.uncertainties.filter(onlyVerified) : draft.uncertainties), ...omitted],
       provenance: unmatched.map((r) => `${r.id} "${r.text}": ${r.explanation}`),
       evidence: cited.map((id) => { const { content: _content, records: _records, ...rest } = known.get(id)!; return rest; }),
       workflow, claims: results, checks: { rounds: info.rounds ?? 0, checker: info.checker, supported: results.filter((r) => r.verdict === 'supported').length, total: results.length },

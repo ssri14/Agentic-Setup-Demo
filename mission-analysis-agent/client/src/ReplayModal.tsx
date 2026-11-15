@@ -149,6 +149,12 @@ function Detail({ e, runId }: { e: RunEvent; runId: string }) {
             <div className={c.verdict === 'supported' ? 'muted small' : 'claim-why'}>{VERDICT_LABEL[c.verdict]}: {c.explanation}{c.contradicting.map((x) => ` ${x.evidence} says “${x.quote}”.`).join('')}</div></div></li>))}</ul>
       {p.guidance && <p className="muted small">Guidance: {p.guidance}</p>}
     </>);
+    case 'answer_withheld': return (<>
+      <div className="row-label">Withheld from the published answer</div>
+      <ul className="tight">{(p.withheld ?? []).map((c: { id: string; text: string; verdict: string }) => <li key={c.id}><b>{c.id}</b> {c.text} <span className="muted">({VERDICT_LABEL[c.verdict as keyof typeof VERDICT_LABEL] ?? c.verdict})</span></li>)}</ul>
+      <div className="row-label">Full draft (not published)</div>
+      <p className="muted" style={{ whiteSpace: 'pre-wrap' }}>{p.draft_conclusion}</p>
+    </>);
     case 'node_failed': return (<><div className="kv2"><span>Node</span><b>{p.node}</b></div><div className="task-note err">{p.error}</div><p className="muted small">{p.node === 'report' ? 'A partial answer is built without the model.' : 'The failure goes to the recovery node.'}</p></>);
     case 'task_status': return (<><div className="kv2"><span>Task</span><b>{p.task}</b><span>Status</span><b>{p.status}</b></div>{(p.summary || p.error) && <p className={p.error ? 'task-note err' : ''}>{p.error ?? p.summary}</p>}</>);
     case 'hypothesis_updated': return (<><div className="kv2"><span>Hypothesis</span><b>{p.id}</b><span>Status</span><b>{p.status}</b></div><p>{p.statement}</p></>);

@@ -590,3 +590,21 @@ export function compareSupport(claim: string, sets: RecordSet[]): RecordCheck {
   }
   return wrong.length ? { status: 'mismatch', line: lines, detail: wrong.join('; ') } : { status: 'match', line: lines };
 }
+
+/**
+ * A claim that states a measured value of a run at a time ("BM-RUN-0016 pwr_margin_pu fell to 0.45 by 360 s"): it names a
+ * run, a time or time interval in seconds, and a number that is not a time. Such a claim needs a measurement as evidence
+ * (telemetry samples, event records, an analysis of them); a channel definition or document text cannot establish it.
+ */
+export function statesMeasurement(claim: string): boolean {
+  const text = plain(claim);
+  if (!/\b[A-Za-z]{2,}-RUN-\d+\b/i.test(text)) return false;
+  const timeAt = new Set<number>();
+  for (const m of text.matchAll(/(-?\d+(?:\.\d+)?)(?:\s*(?:-|to|and)\s*(-?\d+(?:\.\d+)?))?\s*(?:s|sec|secs|seconds)\b/gi)) {
+    timeAt.add(m.index!);
+    if (m[2]) timeAt.add(m.index! + m[0].indexOf(m[2], m[1].length));
+  }
+  for (const m of text.matchAll(/(?:mission_elapsed_s|\bt)\s*(?:=|of)\s*(-?\d+(?:\.\d+)?)/gi)) timeAt.add(m.index! + m[0].lastIndexOf(m[1]));
+  if (!timeAt.size) return false;
+  return numberSpans(text).some((n) => !timeAt.has(n.at));
+}

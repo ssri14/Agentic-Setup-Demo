@@ -58,7 +58,7 @@ export default function AnswerCard({ report, run, onEvidence, onReplay }: { repo
           <ul>{report.rejected_alternatives.map((r, i) => <li key={i}><b>{r.hypothesis}</b> — {r.reason}</li>)}</ul></details>
       )}
       {!!(report.uncertainties.length || report.limits?.length) && (
-        <details className="answer-more"><summary>Open uncertainties ({report.uncertainties.length + (report.limits?.length ?? 0)})</summary>
+        <details className="answer-more" open={!!report.partial}><summary>Open uncertainties ({report.uncertainties.length + (report.limits?.length ?? 0)})</summary>
           <ul>{report.uncertainties.map((u, i) => <li key={i}>{u}</li>)}{report.limits?.map((l, i) => <li key={`l${i}`} className="limit">Investigation limit: {l}</li>)}</ul></details>
       )}
       {!!report.provenance?.length && (
