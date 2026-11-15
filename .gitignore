@@ -7,3 +7,4 @@ __pycache__/
 *.log
 # Local credentials and generated artifacts are never committed (see data-ingestion/.gitignore).
 .env
+.git-token
