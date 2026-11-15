@@ -61,6 +61,11 @@ export default function AnswerCard({ report, run, onEvidence, onReplay }: { repo
         <details className="answer-more"><summary>Open uncertainties ({report.uncertainties.length + (report.limits?.length ?? 0)})</summary>
           <ul>{report.uncertainties.map((u, i) => <li key={i}>{u}</li>)}{report.limits?.map((l, i) => <li key={`l${i}`} className="limit">Investigation limit: {l}</li>)}</ul></details>
       )}
+      {!!report.workflow?.length && (
+        <details className="answer-more workflow-notes"><summary>Workflow notes ({report.workflow.length})</summary>
+          <p className="muted small">Steps that failed or were stopped during the investigation. They do not change the verified claims above.</p>
+          <ul>{report.workflow.map((w, i) => <li key={i}>{w}</li>)}</ul></details>
+      )}
       <div className="answer-foot">
         <button className="btn small replay-btn" onClick={onReplay} disabled={!onReplay}>▶ Replay graph</button>
         <button className="btn small" onClick={copy}>{copied ? 'Copied' : 'Copy'}</button>

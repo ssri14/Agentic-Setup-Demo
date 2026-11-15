@@ -59,7 +59,9 @@ Rules:
 - 2 to 6 top-level steps, each with 1 to 4 tasks; tasks within a step run in parallel, and a step starts after the steps in its depends_on finish.
 - Use only these tools, with arguments exactly as specified:
 ${input.catalog}
-- Hypotheses are optional for simple look-up questions; for diagnostic questions state 2 to 4 competing hypotheses and how evidence would confirm or refute each.
+- Choose tools by what the question needs. Document questions (purposes, dependencies, rules, definitions) are answered from search_documents, read_section, get_table, get_figure and lookup_channels; the verifier and reporter read their text directly. Use run_analysis only for computations over CSV data (telemetry_window, events_window, get_table or earlier run_analysis results) that the tools' own summaries cannot answer, such as counting, comparing or aligning samples in time.
+- Do not plan steps that only "produce the answer", "summarise" or "verify": gathering evidence is your job; verifying and writing the answer happen after the plan.
+- Hypotheses are specific, checkable statements that name the exact entities, values, runs or times at stake, so that one row, passage or measurement can confirm or refute each (for example "SEC-03 lists HLT's dependencies as PWR, THM, ENV and ACT", not "HLT depends on power and other subsystems"). For a simple look-up, one hypothesis naming the expected source is enough; for diagnostic questions state 2 to 4 competing ones.
 - If a key term of the question is genuinely ambiguous and would change the investigation (for example which run or which quantity), return "steps": [] and a clarification question with 2 to 4 options instead of a plan. Do not ask if you can find out with a tool.
 - Keep the plan as small as the question allows. A budget limits tool calls.
 Return JSON only.`;
@@ -134,7 +136,7 @@ Return JSON only: {"code": str, "explanation": str}`;
   return [{ role: 'system', content: system }, { role: 'user', content: user }];
 }
 
-export function reporterMessages(input: { mission: string; question: string; hypotheses: string; observations: string; evidence: string; limits: string; feedback?: { previous: string; problems: string } }): ChatMessage[] {
+export function reporterMessages(input: { mission: string; question: string; hypotheses: string; observations: string; evidence: string; limits: string; workflow?: string; feedback?: { previous: string; problems: string } }): ChatMessage[] {
   const system = `${PRINCIPLES}
 
 You are the REPORTER. Write the final answer for the user from the verified findings.
@@ -155,7 +157,8 @@ Return JSON only.`;
   const user = [`<data name="mission">\n${input.mission}\n</data>`, `Question: ${input.question}`,
     `<data name="hypotheses and verdicts">\n${input.hypotheses || '(none stated)'}\n</data>`,
     `<data name="observations">\n${input.observations}\n</data>`, `<data name="evidence index">\n${input.evidence || '(none)'}\n</data>`,
-    input.limits ? `Note: ${input.limits}` : '',
+    input.limits ? `Note: the investigation was cut short: ${input.limits}` : '',
+    input.workflow ? `Workflow notes (steps that failed or were abandoned; they are shown to the user separately. Mention them only if they leave part of the question unanswered, and do not lower confidence for them when the evidence answers the question): ${input.workflow}` : '',
     input.feedback ? `Your previous draft failed the claim check. Correct it from the evidence; do not repeat unsupported statements.\n<data name="previous draft">\n${input.feedback.previous}\n</data>\n<data name="claim check findings">\n${input.feedback.problems}\n</data>` : '',
   ].filter(Boolean).join('\n\n');
   return [{ role: 'system', content: system }, { role: 'user', content: user }];

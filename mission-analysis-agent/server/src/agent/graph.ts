@@ -28,7 +28,7 @@ import type { EventSink } from './events.js';
 import { completeJson, type ChatMessage, type ChatModel, type ModelRole } from './llm.js';
 import { MAX_CONTENT, cellFound, labelTables, locateSupport, quoteFound, relatedLines, tableContent } from './evidence.js';
 import { analystMessages, checkerMessages, missionBlock, plannerMessages, recoveryMessages, reporterMessages, toolCatalog, verifierMessages, type MissionContext } from './prompts.js';
-import { AnalystOutput, CheckOutput, PlanOutput, ReportOutput, TASK_REF, VerifyOutput, recoverSchema, taskRefs, type Claim, type ReportOutput as ReportValue } from './schemas.js';
+import { AnalystOutput, CheckOutput, PlanOutput, ReportOutput, TASK_REF, VerifyOutput, planSchema, recoverSchema, taskRefs, type Claim, type ReportOutput as ReportValue } from './schemas.js';
 
 export interface Budgets { maxToolCalls: number; maxRevisions: number; maxLlmCalls: number; maxSeconds: number; maxClarifications: number; parallelTasks: number; maxRetries: number; maxRecoveries: number }
 export const DEFAULT_BUDGETS: Budgets = { maxToolCalls: 48, maxRevisions: 5, maxLlmCalls: 100, maxSeconds: 900, maxClarifications: 1, parallelTasks: 3, maxRetries: 2, maxRecoveries: 10 };
@@ -83,6 +83,8 @@ export const AgentState = Annotation.Root({
   reason: last<string>(),
   clarification: last<Clarification | null>(),
   limits: last<string[]>(),
+  /** Failed or abandoned workflow steps. Reported with the answer; they do not lower confidence when the claims are verified. */
+  workflow: last<string[]>(),
   failure: last<Failure | null>(),
   retries: last<Record<string, number>>(),
   draft: last<ReportValue | null>(),
@@ -307,7 +309,7 @@ export function buildAgent(ctx: AgentContext) {
       sections: sections.map((x) => `${x.label} ${x.title}`), runs: [...new Set(runs.map((r) => String(r.run_id)))],
       subsystems: [...new Set(channels.map((c) => String(c.owner)))].sort() };
     await ctx.sink.emit('intake', 'context_loaded', `${context.sections.length} sections, ${context.runs.length} runs`, context);
-    const next: Partial<State> = { missionText: missionBlock(context), counters, route: 'plan', plans: [], steps: {}, tasks: {}, hypotheses: [], evidence: [], observations: [], limits: [], clarification: null };
+    const next: Partial<State> = { missionText: missionBlock(context), counters, route: 'plan', plans: [], steps: {}, tasks: {}, hypotheses: [], evidence: [], observations: [], limits: [], workflow: [], clarification: null };
     await leave('intake', { ...s, ...next } as State, counters);
     return next;
   }
@@ -323,7 +325,7 @@ export function buildAgent(ctx: AgentContext) {
     const nextStep = Object.keys(s.steps ?? {}).length + 1;
     let value: PlanOutput;
     try {
-      ({ value } = await callModel(ctx, 'plan', 'planner', PlanOutput, plannerMessages({
+      ({ value } = await callModel(ctx, 'plan', 'planner', planSchema(Object.fromEntries(Object.values(s.tasks ?? {}).map((t) => [t.id, t.tool]))), plannerMessages({
         mission: s.missionText, catalog: toolCatalog(Boolean(ctx.mission.telemetrySchema)), question: s.question, history: s.history,
         clarification: s.clarification?.answer ? `${s.clarification.question} → ${s.clarification.answer}` : undefined,
         revision: revision ? { previousPlan: planText(s), observations: observationsText(s, 10000), verdicts: hypothesesText(s.hypotheses), reason: s.reason, nextStep } : undefined,
@@ -569,10 +571,10 @@ export function buildAgent(ctx: AgentContext) {
       await leave('recover', { ...s, ...next } as State, counters);
       return next;
     };
-    const partial = (why: string) => [...s.limits, `stopped after a failure in ${where} (${trim(f.error, 200)}): ${why}`];
+    const partial = (why: string) => [...(s.workflow ?? []), `${f.node === 'execute' ? '' : `${where} failed: `}${trim(f.error.replace(/\n/g, '; '), 200)} — the investigation stopped there: ${why}`];
 
     const limit = outOfBudget(counters) ?? (counters.recoveries >= ctx.budgets.maxRecoveries ? `recovery budget (${ctx.budgets.maxRecoveries}) used up` : null);
-    if (limit) return decide('finish', 'finish', 'report', limit, { limits: partial(limit) }, { guard: true });
+    if (limit) return decide('finish', 'finish', 'report', limit, { limits: [...s.limits, limit], workflow: partial(limit) }, { guard: true });
     counters.recoveries++;
 
     const taskTools = Object.fromEntries(f.tasks.map((id) => [id, tasks[id].tool]));
@@ -592,7 +594,7 @@ export function buildAgent(ctx: AgentContext) {
     } catch (error) {
       if (error instanceof StoppedError || ctx.signal.aborted) throw new StoppedError();
       const why = `the recovery model failed (${trim((error as Error).message, 160)}); answering with the evidence gathered so far`;
-      return decide('finish', 'finish', 'report', why, { limits: partial(why) }, { fallback: true });
+      return decide('finish', 'finish', 'report', why, { workflow: partial(why) }, { fallback: true });
     }
 
     // Guards the model cannot talk its way past.
@@ -620,7 +622,7 @@ export function buildAgent(ctx: AgentContext) {
       case 'skip': return decide(d.action, 'skip', pendingTasks({ ...s, tasks } as State).length ? 'execute' : 'verify', reason, {}, more);
       case 'revise': return decide(d.action, 'revise', 'plan', `Recovering from a failure in ${where}: ${reason}`, {}, more);
       case 'clarify': return decide(d.action, 'clarify', 'clarify', reason, { clarification: { question: d.clarification!.question, options: d.clarification!.options } }, more);
-      default: return decide(d.action, 'finish', 'report', reason, { limits: partial(reason) }, more);
+      default: return decide(d.action, 'finish', 'report', reason, { workflow: partial(reason) }, more);
     }
   }
 
@@ -634,7 +636,7 @@ export function buildAgent(ctx: AgentContext) {
     try {
       ({ value } = await callModel(ctx, 'report', 'reporter', ReportOutput, reporterMessages({
         mission: s.missionText, question: s.question, hypotheses: hypothesesForReport(s),
-        observations: observationsText(s, 10000), evidence: evidenceText(s.evidence, 26000, citedByVerdicts(s)), limits: s.limits.join('; '),
+        observations: observationsText(s, 10000), evidence: evidenceText(s.evidence, 26000, citedByVerdicts(s)), limits: s.limits.join('; '), workflow: (s.workflow ?? []).join('; '),
         feedback: s.checkFeedback && s.draft ? { previous: s.draft.conclusion, problems: s.checkFeedback } : undefined,
       }), counters, 5000));
     } catch (error) {
@@ -760,8 +762,11 @@ export function buildAgent(ctx: AgentContext) {
     if (insufficient) lower('low', `${insufficient} claim(s) not established by the evidence`);
     if (unmatched.length) lower('medium', `${unmatched.length} claim(s) judged supported by the checker, but the cited text could not be matched to confirm it (${unmatched.map((r) => r.id).join(', ')})`);
     if (results.some((r) => r.verdict === 'unchecked')) lower('medium', 'claims were not cross-checked because the claim checker was unavailable');
-    const limits = [...s.limits, ...(info.limit ? [info.limit] : [])];
-    if (limits.length) lower('medium', 'the investigation hit a limit or a failure');
+    // Budget limits cut the investigation short, so they cap confidence. Failed workflow steps do not:
+    // they are reported separately, and the claim check decides whether the answer itself is supported.
+    const limits = [...new Set([...s.limits, ...(info.limit ? [info.limit] : [])])];
+    if (limits.length) lower('medium', `the investigation was cut short (${limits.join('; ')})`);
+    const workflow = [...(s.workflow ?? [])];
     if (s.hypotheses.some((h) => h.status === 'conflicting')) lower('medium', 'a hypothesis still has conflicting evidence');
     const confidence = rank[draft.confidence] <= rank[cap] ? draft.confidence : cap;
     const lowered = confidence !== draft.confidence;
@@ -786,7 +791,7 @@ export function buildAgent(ctx: AgentContext) {
       confidence_reason: lowered ? `${draft.confidence_reason} — lowered from ${draft.confidence}: ${why.join('; ')}` : draft.confidence_reason,
       uncertainties: [...draft.uncertainties, ...bad.map((r) => `${r.verdict === 'contradicted' ? 'Contradicted' : 'Unverified'} claim: ${r.text}`), ...unmatched.map((r) => `Citation not matched (checker: supported): ${r.text}`)],
       evidence: cited.map((id) => { const { content: _content, ...rest } = known.get(id)!; return rest; }),
-      claims: results, checks: { rounds: info.rounds ?? 0, checker: info.checker, supported: results.filter((r) => r.verdict === 'supported').length, total: results.length },
+      workflow, claims: results, checks: { rounds: info.rounds ?? 0, checker: info.checker, supported: results.filter((r) => r.verdict === 'supported').length, total: results.length },
       limits,
     };
     const view = buildView(finalState);

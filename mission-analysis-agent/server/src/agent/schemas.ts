@@ -87,6 +87,39 @@ export const PlanOutput = z.object({
 });
 export type PlanOutput = z.output<typeof PlanOutput>;
 
+/** What each tool's result can feed into another task. */
+export const PRODUCES_CSV = new Set(['get_table', 'telemetry_window', 'events_window', 'run_analysis']);
+export const PRODUCES_SECTION = new Set(['search_documents', 'read_section', 'get_table', 'get_figure', 'lookup_channels', 'graph_neighbours']);
+const RETURNS: Record<string, string> = {
+  search_documents: 'document passages', read_section: 'the text of a document section', get_figure: 'figure descriptions', lookup_channels: 'channel definitions',
+  graph_neighbours: 'knowledge-graph links', list_runs: 'a list of runs', get_table: 'a table (CSV)', telemetry_window: 'telemetry samples (CSV)', events_window: 'events (CSV)', run_analysis: 'analysis tables (CSV)',
+};
+
+/**
+ * The plan contract plus type checks on task references: run_analysis inputs must be tasks that return CSV,
+ * read_section references must be tasks that return document results. `earlier` maps tasks of previous plan
+ * versions to their tools, so revisions can reference completed work.
+ */
+export function planSchema(earlier: Record<string, string> = {}) {
+  return PlanOutput.superRefine((plan, ctx) => {
+    const tools: Record<string, string> = { ...earlier };
+    for (const step of plan.steps) for (const t of step.tasks) tools[t.id] = t.tool;
+    plan.steps.forEach((step, si) => step.tasks.forEach((task, ti) => {
+      for (const ref of taskRefs(task)) {
+        const source = tools[ref];
+        const path = ['steps', si, 'tasks', ti, 'args'];
+        if (!source) { ctx.addIssue({ code: 'custom', path, message: `${task.id} refers to @${ref}, which is not a task of this plan or of an earlier one` }); continue; }
+        if (task.tool === 'run_analysis' && !PRODUCES_CSV.has(source)) {
+          ctx.addIssue({ code: 'custom', path, message: `${task.id} run_analysis cannot take @${ref}: ${source} returns ${RETURNS[source] ?? 'no table'}, not CSV. run_analysis only analyses CSV results of get_table, telemetry_window, events_window or run_analysis. Document text needs no analysis task: the verifier and reporter read it directly.` });
+        }
+        if (task.tool === 'read_section' && !PRODUCES_SECTION.has(source)) {
+          ctx.addIssue({ code: 'custom', path, message: `${task.id} read_section cannot take @${ref}: ${source} returns ${RETURNS[source] ?? 'no document result'}, which has no document section` });
+        }
+      }
+    }));
+  });
+}
+
 export const VerdictStatus = z.enum(['supported', 'refuted', 'conflicting', 'insufficient', 'untested']);
 export const Confidence = z.enum(['high', 'medium', 'low']);
 

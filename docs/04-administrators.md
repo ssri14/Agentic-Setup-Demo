@@ -139,7 +139,9 @@ Each answer's replay shows which model handled every call.
 
 ## Agent limits and recovery
 
-Each question runs under the budgets in `.env`: 48 tool calls, 5 plan revisions, 100 model calls, 15 minutes, and 2 retries per failed step. When a budget runs out, the agent answers with what it has and lists the limit under the answer's uncertainties. Raise a budget for harder questions; lower it for quicker demos. Restart `agent-web` after changing one.
+Each question runs under the budgets in `.env`: 48 tool calls, 5 plan revisions, 100 model calls, 15 minutes, and 2 retries per failed step. When a budget runs out, the agent answers with what it has, lists the limit under the answer's uncertainties and caps confidence at medium. A failed step that the recovery decides to skip or stop at is listed under **Workflow notes** instead and does not lower confidence when the answer's claims are verified.
+
+Plans are also checked for tool compatibility before anything runs: `run_analysis` only accepts CSV results (`get_table`, `telemetry_window`, `events_window`, `run_analysis`), and `read_section` references only document results. An incompatible plan goes back to the planner with the reason. Raise a budget for harder questions; lower it for quicker demos. Restart `agent-web` after changing one.
 
 When anything fails, the run goes to the **Recover** node instead of stopping. Failures include a tool error or timeout, a bad argument, and the planner or verifier model failing. There, the verifier model chooses one action:
 

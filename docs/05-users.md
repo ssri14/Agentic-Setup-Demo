@@ -91,7 +91,8 @@ The answer card contains:
 
   A claim that is not ✓ sends the answer back to be rewritten (or, when evidence is missing, back to planning), up to two times. Claims that still fail are listed at the end of the conclusion, and the confidence reason says exactly why it was lowered.
 - **Rejected alternatives**: hypotheses the evidence ruled out, and why.
-- **Uncertainties**: what the agent could not establish, including any limit it hit (for example *tool-call budget reached*) or a step that failed and could not be recovered.
+- **Uncertainties**: what the agent could not establish, including any budget it ran out of (for example *tool-call budget reached*). A budget cut lowers confidence to at most medium, because the investigation may have stopped before finding something relevant.
+- **Workflow notes**: steps that failed or were stopped along the way (a tool error, a timeout, a step the recovery decided to skip). They are listed for transparency but do not lower confidence on their own: if every claim of the answer is verified, the answer stays high.
 
 How to read an answer critically:
 

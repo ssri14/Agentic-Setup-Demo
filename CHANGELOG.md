@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.0.5 — 2026-11-15
+
+In the HLT run the planner added `run_analysis` over `@S1.2` (a `read_section` result) to "produce the final evidence-based answer"; it failed with "input @S1.2 has no CSV result", and that failure lowered an answer whose claims were all verified to MEDIUM. Evidence verification is unchanged.
+
+- **Type-safe references.** Plans are validated for tool compatibility before anything runs: `run_analysis` inputs must be tasks that return CSV (`get_table`, `telemetry_window`, `events_window`, `run_analysis`); `read_section` references must be tasks that return document results. References into earlier plan versions are checked too. An incompatible plan goes back to the planner with the reason, so nothing fails at run time.
+- **Tool selection.** The planner is told that document questions are answered from the document tools, that `run_analysis` is for computations over CSV data the tool summaries cannot answer, and not to plan steps that only produce, summarise or verify the answer.
+- **Confidence versus workflow failures.** Budget limits still cap confidence at medium. Failed or abandoned steps (tool errors the recovery stops at or skips) are now *workflow notes*: reported with the answer under their own heading, and no longer lowering the confidence of an answer whose claims are verified.
+- **Specific hypotheses.** The planner states hypotheses that name the exact entities, values, runs or times, so one row, passage or measurement can confirm or refute each.
+- 4 new tests (74 in total), including the telemetry investigation plan with `run_analysis`, which is accepted unchanged.
+
 ## 1.0.4 — 2026-11-15
 
 After 1.0.2 the HLT answer was correct but reported LOW confidence with "Not verified against the evidence: HLT depends on the PWR, THM, ENV, and ACT subsystems (no supporting quote)". Cause, confirmed on the recorded text: the evidence was a search passage in which PyMuPDF keeps the SEC-03 table one cell per line, one row per block. Only "a | b | c" tables were turned into labelled rows, so the reporter's quote "HLT … Depends on PWR, THM, ENV, ACT" (header before the row, value after it) failed the strict in-order match, and that failure overruled the checker's "supported".

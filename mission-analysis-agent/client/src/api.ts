@@ -39,6 +39,8 @@ export interface EvidenceItem { id: string; kind: string; ref: string; label: st
 export interface Report {
   conclusion: string; confidence: 'high' | 'medium' | 'low'; confidence_reason: string; evidence: EvidenceItem[];
   rejected_alternatives: { hypothesis: string; reason: string }[]; uncertainties: string[]; limits: string[];
+  /** Failed or abandoned steps (1.0.5+); they do not lower confidence when the claims are verified. */
+  workflow?: string[];
   claims?: CheckedClaim[]; checks?: { rounds: number; checker: 'ok' | 'failed' | 'skipped'; supported: number; total: number };
 }
 /** 'unsupported' appears in answers saved by 1.0.2–1.0.3 and means 'insufficient'. */

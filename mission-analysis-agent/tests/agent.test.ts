@@ -205,8 +205,10 @@ describe('agent', () => {
     const run = await runner(model, { ...DEFAULT_BUDGETS, maxToolCalls: 2 }).start(chat, user, mission, 'Budget test');
     const done = await settle(run.id);
     expect(done.status, done.error).toBe('complete');
-    const r = (await store.messages.list(chat.id)).find((m) => m.role === 'assistant')!.report as { limits: string[] };
+    const r = (await store.messages.list(chat.id)).find((m) => m.role === 'assistant')!.report as { limits: string[]; confidence: string; confidence_reason: string };
     expect(r.limits.join(' ')).toContain('tool-call budget (2) reached');
+    expect(r.confidence).toBe('medium');                                   // a budget cut still caps confidence
+    expect(r.confidence_reason).toContain('the investigation was cut short (tool-call budget (2) reached)');
   });
 
   it('refuses a second question while one is in progress', async () => {
@@ -315,7 +317,9 @@ describe('recovery', () => {
     expect(done.status, done.error).toBe('complete');
     expect((await decisions(run.id))[0]).toMatchObject({ action: 'finish', route: 'report', fallback: true });
     const answer = (await store.messages.list(chat.id)).find((m) => m.role === 'assistant')!;
-    expect((answer.report as { limits: string[] }).limits[0]).toMatch(/stopped after a failure in S1.1/);
+    const r = answer.report as { limits: string[]; workflow: string[] };
+    expect(r.workflow[0]).toMatch(/^S1.1 list_runs: injected fault/);       // a workflow note, not an investigation limit
+    expect(r.limits).toEqual([]);
   });
 
   it('builds a partial answer without a model when the reporter fails', async () => {
@@ -565,3 +569,63 @@ describe('claim validation reconciled with the verifier (recorded HLT run)', () 
   });
 });
 
+describe('type-safe tool planning', () => {
+  const question = 'What is the purpose of the HLT subsystem, and which subsystems does it depend on?';
+  const title = ['{"title":"HLT purpose"}'];
+  const docsThenAnalysis = JSON.stringify({ objective: 'HLT purpose and dependencies', hypotheses: [{ id: 'H1', statement: 'SEC-03 lists HLT dependencies as PWR, THM, ENV and ACT' }], steps: [
+    { id: 'S1', title: 'Read', tasks: [{ id: 'S1.1', tool: 'search_documents', args: { query: 'HLT purpose' }, purpose: 'find' }, { id: 'S1.2', tool: 'read_section', args: { section: '@S1.1' }, purpose: 'read' }] },
+    { id: 'S2', title: 'Answer', depends_on: ['S1'], tasks: [{ id: 'S2.1', tool: 'run_analysis', args: { inputs: ['@S1.2'], goal: 'Produce the final evidence-based answer' }, purpose: 'answer' }] }] });
+  const docsOnly = JSON.stringify({ objective: 'HLT purpose and dependencies', hypotheses: [{ id: 'H1', statement: 'SEC-03 lists HLT dependencies as PWR, THM, ENV and ACT' }], steps: [
+    { id: 'S1', title: 'Read', tasks: [{ id: 'S1.1', tool: 'search_documents', args: { query: 'HLT purpose' }, purpose: 'find' }, { id: 'S1.2', tool: 'get_table', args: { contains: 'HLT', max_tables: 1 }, purpose: 'row' }] }] });
+  const verified = JSON.stringify({ verdicts: [{ hypothesis: 'H1', status: 'supported', confidence: 'high', evidence_for: ['E1'], note: 'row' }], next: 'report', reason: 'answered' });
+
+  it('rejects run_analysis over a document section before anything runs; the planner answers from the documents', async () => {
+    const model = new ScriptedModel({ title, planner: [docsThenAnalysis, docsOnly], verifier: [verified], reporter: [report] });
+    const run = await runner(model).start(chat, user, mission, question);
+    expect((await settle(run.id)).status).toBe('complete');
+    const retry = model.calls.filter((c) => c.role === 'planner')[1].messages.at(-1)!.content;
+    expect(retry).toContain('S2.1 run_analysis cannot take @S1.2: read_section returns the text of a document section, not CSV');
+    const tools = (await store.events.list(run.id)).filter((e) => e.type === 'tool_called').map((e) => (e.payload as { tool: string }).tool);
+    expect(tools).toEqual(['search_documents', 'get_table']);                // no analysis, no failure
+  });
+
+  it('applies the same check to references into an earlier plan version', async () => {
+    const replan = JSON.stringify({ verdicts: [{ hypothesis: 'H1', status: 'insufficient', confidence: 'low', note: 'need more' }], next: 'replan', reason: 'analyse it' });
+    const badRevision = JSON.stringify({ objective: 'Analyse', steps: [{ id: 'S2', title: 'Analyse', tasks: [{ id: 'S2.1', tool: 'run_analysis', args: { inputs: ['@S1.1'], goal: 'Analyse the search results in detail' }, purpose: 'x' }] }] });
+    const goodRevision = JSON.stringify({ objective: 'Table', steps: [{ id: 'S2', title: 'Table', tasks: [{ id: 'S2.1', tool: 'get_table', args: { contains: 'HLT', max_tables: 1 }, purpose: 'row' }] }] });
+    const model = new ScriptedModel({ title, planner: [docsOnly, badRevision, goodRevision], verifier: [replan, verified], reporter: [report] });
+    const run = await runner(model).start(chat, user, mission, question);
+    expect((await settle(run.id)).status).toBe('complete');
+    expect(model.calls.filter((c) => c.role === 'planner')[2].messages.at(-1)!.content).toContain('run_analysis cannot take @S1.1: search_documents returns document passages');
+  });
+
+  it('still lets run_analysis use telemetry: the telemetry investigation plan is accepted unchanged', async () => {
+    const model = new ScriptedModel({ planner: [plan1], analyst: [analyst], verifier: [verifyContinue, verifyContinue, verifyReport], reporter: [report] });
+    const run = await runner(model).start(chat, user, mission, 'Which runs lost source samples?');
+    expect((await settle(run.id)).status).toBe('complete');
+    expect(model.calls.filter((c) => c.role === 'planner')).toHaveLength(1);
+    const analysis = (await store.events.list(run.id)).find((e) => e.type === 'tool_result' && (e.payload as { tool: string }).tool === 'run_analysis')!.payload as { ok: boolean };
+    expect(analysis.ok).toBe(true);
+  });
+});
+
+describe('answer confidence versus workflow failures', () => {
+  it('keeps high confidence when the claims are verified and an unrelated step failed; the failure is reported separately', async () => {
+    await store.settings.set('fault_injection', { enabled: true, tool: 'events_window', toolFailures: 1, plannerFailures: 0 });
+    const plan = JSON.stringify({ objective: 'HLT dependencies, plus HLT events', hypotheses: [{ id: 'H1', statement: 'SEC-03 lists HLT dependencies as PWR, THM, ENV and ACT' }], steps: [
+      { id: 'S1', title: 'Read', tasks: [{ id: 'S1.1', tool: 'get_table', args: { contains: 'HLT', max_tables: 1 }, purpose: 'row' },
+        { id: 'S1.2', tool: 'events_window', args: { run_id: 'BM-RUN-0010', subsystem: 'HLT' }, purpose: 'optional context' }] }] });
+    const verified = JSON.stringify({ verdicts: [{ hypothesis: 'H1', status: 'supported', confidence: 'high', evidence_for: ['E1'], note: 'row' }], next: 'report', reason: 'answered' });
+    const finish = JSON.stringify({ action: 'finish', reason: 'the table already answers the question' });
+    const answer = JSON.stringify({ conclusion: 'HLT depends on PWR, THM, ENV and ACT [E1].', confidence: 'high', confidence_reason: 'table row', evidence: ['E1'],
+      claims: [{ id: 'C1', text: 'HLT depends on PWR, THM, ENV and ACT', evidence: ['E1'], quote: '', cell: { row: 'HLT', column: 'Depends on', value: 'PWR, THM, ENV, ACT' } }] });
+    const model = new ScriptedModel({ title: ['{"title":"HLT"}'], planner: [plan], verifier: [(m) => (m[0].content.includes('You are the RECOVERY') ? finish : verified)], reporter: [answer] });
+    const run = await runner(model).start(chat, user, mission, 'Which subsystems does HLT depend on?');
+    expect((await settle(run.id)).status).toBe('complete');
+    const r = (await store.messages.list(chat.id)).find((m) => m.role === 'assistant')!.report as { confidence: string; limits: string[]; workflow: string[]; claims: { verdict: string }[] };
+    expect(r.claims.map((c) => c.verdict)).toEqual(['supported']);
+    expect(r.confidence).toBe('high');
+    expect(r.limits).toEqual([]);
+    expect(r.workflow).toEqual([expect.stringMatching(/^S1.2 events_window: injected fault: events_window timed out.*the investigation stopped there: the table already answers the question$/)]);
+  });
+});
