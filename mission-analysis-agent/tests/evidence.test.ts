@@ -190,6 +190,45 @@ describe('review F04: event messages', () => {
   });
 });
 
+// Counterexamples from the independent re-review of 1.0.7 (R01-R03).
+describe('re-review R01: unknown event codes', () => {
+  it('never ignores an event type or subsystem that the records do not have', () => {
+    for (const claim of ['NOT_A_REAL_EVENT was raised by DAQ at 347 s in BM-RUN-0010', 'DAQ reported NOT_A_REAL_EVENT at 347 s', 'XYZ reported DAQ_CAPTURE_RESUMED at 347 s'])
+      expect(recordSupport(claim, events10), claim).toMatchObject({ status: 'unparsed', detail: expect.stringMatching(/NOT_A_REAL_EVENT|XYZ/) });
+  });
+  it('still matches a real event and contradicts a real but wrong one', () => {
+    expect(recordSupport('At 347 s DAQ raised DAQ_CAPTURE_RESUMED', events10)?.status).toBe('match');
+    expect(recordSupport('At 347 s STG raised DAQ_CAPTURE_RESUMED', events10)?.status).toBe('mismatch');
+    expect(recordSupport('At 347 s type = NOT_A_REAL_EVENT, subsystem_id = DAQ', events10)?.status).not.toBe('match');
+  });
+});
+
+describe('re-review R02: several times in one claim', () => {
+  const w = samples(100, 101);       // pwr_bus_level_pu 0.8664 at 100 s, 0.8671 at 100.5 s
+  it('requires every stated time to hold on its own record', () => {
+    expect(recordSupport('At 100 s and 100.5 s, pwr_bus_level_pu = 0.8664', w))
+      .toMatchObject({ status: 'mismatch', detail: 'at 100.5 s the record has pwr_bus_level_pu = 0.8671, not 0.8664' });
+    expect(recordSupport('At 100 s and 101 s, pwr_bus_level_pu = 0.8664', w, { start: 100, end: 102 }))
+      .toEqual({ status: 'absent', detail: 'no record at exactly 101 s in this window' });
+    expect(recordSupport('At 100 s and 101 s, pwr_bus_level_pu = 0.8664', w)?.status).not.toBe('match');
+  });
+  it('accepts a value that holds at every stated time, and leaves ranges to other checks', () => {
+    expect(recordSupport('At 347 s and 348 s, stg_state was CONFIRMED', samples(340, 350))?.status).toBe('match');
+    expect(recordSupport('At 347 s and 348 s, stg_state was PENDING', samples(340, 350))?.status).toBe('mismatch');
+    expect(recordSupport('pwr_bus_level_pu stayed near 0.867 between 100 and 101 s', w)).toBeNull();
+    expect(recordSupport('pwr_bus_level_pu rose from 0.8664 at 100 s to 0.8671 at 100.5 s', w)?.status).not.toBe('match');
+  });
+});
+
+describe('re-review R03: sample_index as a keyed field', () => {
+  const w = samples(100, 101);       // sample_index 200 at 100 s
+  it('checks a stated sample index against the record', () => {
+    expect(recordSupport('At 100 s sample_index = 200 and pwr_bus_level_pu = 0.8664', w)?.status).toBe('match');
+    expect(recordSupport('At 100 s sample_index = 201 and pwr_bus_level_pu = 0.8664', w))
+      .toMatchObject({ status: 'mismatch', detail: 'at 100 s the record has sample_index = 200, not 201' });
+  });
+});
+
 describe('numbers in prose and tables', () => {
   it('does not accept a located line or a cell whose numbers differ from the claim', () => {
     const rows = labelTables('Phase\nNominal interval [start,end) s\nPurpose\n\nP3\n280-400\nStage transition window');

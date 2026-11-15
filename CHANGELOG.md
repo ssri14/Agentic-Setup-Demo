@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.0.8 — 2026-11-15
+
+Closes the gaps an independent re-review of 1.0.7 reproduced in the record check (`server/src/agent/evidence.ts`). The planner, prompts, ingestion and data are unchanged.
+
+- **R01 — unknown event codes.** In an event claim, every code it names (subsystem, event type, state) must be a value of the retrieved events. An invented event type or a subsystem not in the window is no longer ignored when the time matches: the claim is "not established".
+- **R02 — several times.** Each stated time is a separate assertion and must hold on its own record; a missing time is reported as no record. A time range ("between 100 and 101 s") is not treated as a single sample.
+- **R03 — sample_index.** A stated sample_index (or "sample #") is checked against the record; it is no longer mistaken for a channel value.
+- **Reconciliation.** A matching record is "supported" only when the checker also finds the claim supported; if the checker cannot establish or disputes the rest of the claim (a cause, an interpretation), the claim is "not established" with both findings explained. A claim about a record that cannot be checked mechanically is never supported on the checker's word alone (it was a citation note in 1.0.7).
+- 6 new tests (104 in total); the reviewer's 17 targeted probes and 7 event counterexamples all give the expected result.
+
 ## 1.0.7 — 2026-11-15
 
 Corrects the structured-record check added in 1.0.6, following an independent review that reproduced four defects in `server/src/agent/evidence.ts`. The planner, prompts, ingestion and data are unchanged.

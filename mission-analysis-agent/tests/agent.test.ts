@@ -684,6 +684,19 @@ describe('claim check on telemetry records (observed regression)', () => {
     }
   });
 
+  it('does not promote a matching record over a checker that cannot establish the rest of the claim (re-review)', async () => {
+    const unsure: Reply = (m) => JSON.stringify({ claims: [...m[1].content.matchAll(/^(C\d+): /gm)].map((x) => ({ id: x[1], verdict: 'unsupported', explanation: 'the evidence does not say it caused a brownout' })), next: 'accept' });
+    const reply = JSON.stringify({ conclusion: 'pwr_bus_level_pu was 0.866 pu at 100 s, which caused a brownout [E1].', confidence: 'high', confidence_reason: 'direct sample', evidence: ['E1'],
+      claims: [{ id: 'C1', text: 'At 100 s pwr_bus_level_pu = 0.866, which caused a brownout', evidence: ['E1'], quote: 'pwr_bus_level_pu = 0.866' }] });
+    const model = new ScriptedModel({ title: ['{"title":"Simple Query"}'], planner: [plan], verifier: [verified], reporter: [reply], checker: [unsure] });
+    const run = await runner(model).start(chat, user, mission, question);
+    expect((await settle(run.id)).status).toBe('complete');
+    const r = (await store.messages.list(chat.id)).find((m) => m.role === 'assistant')!.report as { confidence: string; claims: { verdict: string; explanation: string }[] };
+    expect(r.claims[0]).toMatchObject({ verdict: 'insufficient', explanation: expect.stringContaining('carries the stated values') });
+    expect(r.claims[0].explanation).toContain('could not establish the rest of the claim');
+    expect(r.confidence).toBe('low');
+  });
+
   it('shows the models the sampled values in the evidence text', async () => {
     const model = new ScriptedModel({ title: ['{"title":"Simple Query"}'], planner: [plan], verifier: [verified], reporter: [answer('0.866', '')] });
     const run = await runner(model).start(chat, user, mission, question);

@@ -247,7 +247,12 @@ export function numbersSupported(claim: string, support: string): { ok: boolean;
 export type RecordRow = Record<string, unknown>;
 const RECORD_META = new Set(['run_id', 'sample_index', 'event_seq', 'message', 'receipt_delay_s', 'received_time_utc', 'source_time_utc']);
 /** Other ways a claim names a record field. */
-const FIELD_ALIASES: Record<string, RegExp> = { event_seq: /\b(?:event_seq|seq(?:uence)?(?:\s+(?:no\.?|number))?|event\s+#)(?![A-Za-z0-9_])/i };
+const FIELD_ALIASES: Record<string, RegExp> = {
+  event_seq: /\b(?:event_seq|seq(?:uence)?(?:\s+(?:no\.?|number))?|event\s+#)(?![A-Za-z0-9_])/i,
+  sample_index: /\b(?:sample_index|sample\s+#)(?![A-Za-z0-9_])/i,
+};
+/** A time range ("between 322 and 346.5 s", "from 100 to 101 s") describes a window, not one record. */
+const RANGE = /\b(?:between|from)\s+-?\d+(?:\.\d+)?\s*(?:s|sec|secs|seconds)?\s*(?:and|to|-)\s*-?\d+/i;
 
 export const recordLine = (r: RecordRow) => `Record: ${Object.entries(r).map(([k, v]) => `${k} = ${v ?? ''}`).join('; ')}`;
 
@@ -286,6 +291,7 @@ export function recordSupport(claim: string, records: RecordRow[], window?: { st
   const quoted = [...full.matchAll(/["“]([^"“”]{4,})["”]/g)].map((m) => norm(m[1]));
   claim = full.replace(/["“][^"“”]{4,}["”]/g, blank);
   if (/\b(no|not|missing|absent|without|gaps?|lost|dropouts?|never|none)\b/i.test(claim)) return null;
+  if (RANGE.test(claim)) return null;
   const runs = new Set(records.map((r) => String(r.run_id).toUpperCase()));
   const claimRuns = (claim.match(/\b[A-Za-z]{2,}-RUN-\d+\b/gi) ?? []).map((r) => r.toUpperCase());
   if (claimRuns.some((r) => !runs.has(r))) return null;
@@ -312,7 +318,7 @@ export function recordSupport(claim: string, records: RecordRow[], window?: { st
 
   // Bind each stated value to the field named before it; a single field takes values on either side of it.
   const pairs: { k: string; v: string }[] = [];
-  const numericFields = valueKeys.filter((k) => records.some((r) => r[k] !== '' && r[k] !== null && Number.isFinite(Number(r[k]))));
+  const numericFields = valueKeys.filter((k) => !RECORD_META.has(k) && records.some((r) => r[k] !== '' && r[k] !== null && Number.isFinite(Number(r[k]))));
   for (const v of values) {
     const before = mentioned.filter((m) => m.at <= v.at).pop();
     const k = before?.k ?? (mentioned.length === 1 ? mentioned[0].k : !mentioned.length && numericFields.length === 1 ? numericFields[0] : null);
@@ -326,6 +332,34 @@ export function recordSupport(claim: string, records: RecordRow[], window?: { st
   // A message: quoted text (in double quotes; apostrophes are not quotes) must be in the record's message; an unquoted description of it cannot be checked here.
   const hasMessages = keys.includes('message');
   if (hasMessages && !quoted.length && /\b(message|says?|said|reading|text)\b/i.test(claim)) return { status: 'unparsed', detail: 'describes the event message without quoting it' };
+
+  // Event claims: every code the claim names (subsystem, event type, state) must be a value of these records. An unknown
+  // code (an invented event type, a subsystem not in the window) is never ignored: it is a field value we cannot confirm.
+  if (keys.includes('type') && keys.includes('subsystem_id')) {
+    const known = new Set(records.flatMap((r) => textFields.map((k) => String(r[k] ?? '').toUpperCase())));
+    const codes = [...new Set(claim.replace(ID_SPAN, blank).match(/\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*\b/g) ?? [])]
+      .filter((w) => (w.includes('_') || (w.length >= 2 && w.length <= 6)) && !STOP.has(w) && !keys.some((k) => k.toUpperCase() === w) && !known.has(w));
+    if (codes.length) return { status: 'unparsed', detail: `names ${codes.join(', ')}, which ${codes.length > 1 ? 'are' : 'is'} not a subsystem, event type or state in these records` };
+  }
+
+  // Several times: each one is a separate assertion, and each must hold on its own record.
+  const distinct = [...new Set(times.map(Number))];
+  if (distinct.length > 1) {
+    const rowsAt = (t: number) => records.filter((r) => Math.abs(t - Number(r.mission_elapsed_s)) < 1e-9);
+    const missing = distinct.filter((t) => !rowsAt(t).length);
+    if (missing.length) {
+      const inside = missing.every((t) => (window?.start === undefined || t >= window.start) && (window?.end === undefined || t < window.end));
+      return inside ? { status: 'absent', detail: `no record at exactly ${missing.join(', ')} s in this window` }
+        : { status: 'unparsed', detail: `the evidence does not cover ${missing.join(', ')} s` };
+    }
+    const lines: string[] = [];
+    for (const t of distinct) {
+      const res = recordSupport(full.replace(/(?:mission_elapsed_s|\bt)\s*(?:=|of)\s*-?\d+(?:\.\d+)?|-?\d+(?:\.\d+)?\s*(?:s|sec|secs|seconds)\b/gi, ' ') + ` at ${t} s`, rowsAt(t), window);
+      if (!res || res.status !== 'match') return res ?? { status: 'unparsed', detail: `cannot check the claim at ${t} s` };
+      lines.push(res.line);
+    }
+    return { status: 'match', line: lines.join('\n') };
+  }
 
   const anchored = times.length ? records.filter((r) => times.some((t) => Math.abs(Number(t) - Number(r.mission_elapsed_s)) < 1e-9)) : records;
   if (times.length && !anchored.length) {

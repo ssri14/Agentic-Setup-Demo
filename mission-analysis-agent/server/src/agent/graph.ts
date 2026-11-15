@@ -741,14 +741,16 @@ export function buildAgent(ctx: AgentContext) {
       // Structured records decide on their own: a different recorded value is a contradiction whatever the checker says.
       if (d.mismatch) { verdict = 'contradicted'; explanation = `${d.mismatch.detail}${explanation ? `; checker: ${explanation}` : ''}`; contradicting.unshift({ evidence: d.mismatch.evidence, quote: d.mismatch.line }); }
       else if (d.absent) { verdict = 'insufficient'; explanation = d.absent; }
-      else if (d.matched === 'record' && m?.verdict !== 'contradicted') { verdict = m ? 'supported' : 'unchecked'; explanation = explanation || 'the record states it'; }
-      // The record carries every stated value, yet the checker disputes the claim: report the disagreement, never "contradicted"
-      // next to a record that matches.
-      else if (d.matched === 'record') { verdict = 'insufficient'; explanation = `the record ${d.in} carries the stated values (${d.support}), but the checker disputes another part of the claim: ${explanation}`; }
+      // A matching record proves the values it checked; the rest of the claim's wording needs the checker's agreement.
+      else if (d.matched === 'record' && m?.verdict === 'supported') { verdict = 'supported'; explanation = explanation || 'the record states it'; }
+      else if (d.matched === 'record' && !m) { verdict = 'unchecked'; explanation = 'the record carries the stated values; the claim checker was not available for the rest of the claim'; }
+      // The checker disputes or cannot establish the claim although the record matches: report the disagreement,
+      // never "contradicted" next to a record that matches.
+      else if (d.matched === 'record') { verdict = 'insufficient'; explanation = `the record ${d.in} carries the stated values (${d.support}), but the checker ${m!.verdict === 'contradicted' ? 'disputes' : 'could not establish'} the rest of the claim: ${explanation}`; }
+      // About a record but not mechanically checkable: never supported on the checker's word alone.
       else if (d.unparsed) {
         if (m?.verdict === 'contradicted' && contradicting.length) verdict = 'contradicted';
-        else if (m?.verdict === 'supported') { verdict = 'validation_error'; explanation = `the checker found it supported, but it could not be checked against the record (${d.unparsed})${explanation ? `; ${explanation}` : ''}`; }
-        else { verdict = 'insufficient'; explanation = `${d.unparsed}${explanation ? `; checker: ${explanation}` : ''}`; }
+        else { verdict = 'insufficient'; explanation = `could not be checked against the record (${d.unparsed})${explanation ? `; checker: ${explanation}` : ''}`; }
       }
       else if (m?.verdict === 'contradicted' && contradicting.length) verdict = 'contradicted';
       else if (d.numbers?.length && m?.verdict !== 'contradicted') { verdict = 'insufficient'; explanation = `${d.numbers.join(', ')} ${d.numbers.length > 1 ? 'do' : 'does'} not appear in ${d.cited.join(', ')}${explanation ? `; checker: ${explanation}` : ''}`; }
@@ -773,7 +775,7 @@ export function buildAgent(ctx: AgentContext) {
 
     // 4. Send problems back while rounds and budgets allow.
     if (bad.length && round < 3 && !limit) {
-      const problems = bad.map((r) => `${r.id} "${r.text}" — ${r.verdict.replace('_', ' ')}: ${r.explanation}${r.contradicting.length ? ` The evidence says: ${r.contradicting.map((x) => `${x.evidence} "${x.quote}"`).join('; ')}` : ''}${r.verdict === 'validation_error' && /field = value/.test(r.explanation) ? ' Restate it as field = value at mission_elapsed_s = t, one value per field.' : r.verdict === 'validation_error' ? ' Fix the citation: quote one contiguous span exactly as written, or for a table fact give "cell": {"row", "column", "value"}.' : ''}`).join('\n') + (model?.guidance ? `\nChecker guidance: ${model.guidance}` : '');
+      const problems = bad.map((r) => `${r.id} "${r.text}" — ${r.verdict.replace('_', ' ')}: ${r.explanation}${r.contradicting.length ? ` The evidence says: ${r.contradicting.map((x) => `${x.evidence} "${x.quote}"`).join('; ')}` : ''}${/field = value/.test(r.explanation) ? ' Restate it as field = value at mission_elapsed_s = t, one value per field.' : r.verdict === 'validation_error' ? ' Fix the citation: quote one contiguous span exactly as written, or for a table fact give "cell": {"row", "column", "value"}.' : ''}`).join('\n') + (model?.guidance ? `\nChecker guidance: ${model.guidance}` : '');
       const investigate = model?.next === 'investigate' && counters.revisions < ctx.budgets.maxRevisions && bad.some((r) => r.verdict !== 'validation_error');
       const route: Route = investigate ? 'plan' : 'report';
       const reason = `Claim check found ${bad.length} problem(s) in the draft answer:\n${problems}`;
