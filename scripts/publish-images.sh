@@ -2,7 +2,7 @@
 # Build the three application images for amd64 and arm64 and push them to Docker Hub.
 #
 #   docker login                          # as ssri14 (or the account in IMAGE_NAMESPACE)
-#   ./scripts/publish-images.sh           # tag from IMAGE_TAG or 1.0.2, plus "latest"
+#   ./scripts/publish-images.sh           # tag from IMAGE_TAG or 1.0.3, plus "latest"
 #   ./scripts/publish-images.sh 1.0.1     # another tag
 #
 # Environment: IMAGE_NAMESPACE (default ssri14), PLATFORMS (default linux/amd64,linux/arm64),
@@ -11,7 +11,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 NS="${IMAGE_NAMESPACE:-ssri14}"
-TAG="${1:-${IMAGE_TAG:-1.0.2}}"
+TAG="${1:-${IMAGE_TAG:-1.0.3}}"
 PLATFORMS="${PLATFORMS:-linux/amd64,linux/arm64}"
 BUILDER=mission-analysis-builder
 

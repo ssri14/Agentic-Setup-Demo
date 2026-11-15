@@ -10,6 +10,21 @@ export const AnalysisTaskArgs = z.object({
   goal: z.string().min(10).max(800),
 });
 
+/** A whole-string reference to another task's output: "@S1.1". */
+export const TASK_REF = /^@S\d+\.\d+$/;
+/**
+ * Where a task may point at another task's output:
+ * - run_analysis inputs: the CSV results of those tasks;
+ * - read_section.section: the section of that task's best result (e.g. the top passage of a search).
+ */
+export function taskRefs(task: { tool: string; args: Record<string, unknown> }): string[] {
+  if (task.tool === 'run_analysis') return ((task.args.inputs as string[]) ?? []).filter((r) => TASK_REF.test(r)).map((r) => r.slice(1));
+  if (task.tool === 'read_section' && typeof task.args.section === 'string' && TASK_REF.test(task.args.section)) return [task.args.section.slice(1)];
+  return [];
+}
+const REF_ANYWHERE = /@S\d+\.\d+/;
+const mentionsRef = (v: unknown): boolean => (typeof v === 'string' ? REF_ANYWHERE.test(v) : Array.isArray(v) ? v.some(mentionsRef) : false);
+
 const Task = z.object({
   id: z.string().regex(/^S\d+\.\d+$/, 'task ids look like "S1.1"'),
   tool: z.enum(AGENT_TOOL_NAMES as [string, ...string[]]),
@@ -42,7 +57,23 @@ export const PlanOutput = z.object({
 }).superRefine((plan, ctx) => {
   if (!plan.steps.length && !plan.clarification) ctx.addIssue({ code: 'custom', message: 'Give at least one step, or a clarification question', path: ['steps'] });
   const taskIds = new Set<string>();
+  const order = plan.steps.flatMap((s) => s.tasks.map((t) => t.id));
   plan.steps.forEach((step, si) => step.tasks.forEach((task, ti) => {
+    // Task references: only where they can be resolved, and only to tasks that run before this one.
+    const refs = taskRefs(task);
+    for (const [key, value] of Object.entries(task.args)) {
+      const allowed = (task.tool === 'run_analysis' && key === 'inputs') || (task.tool === 'read_section' && key === 'section' && refs.length);
+      if (!allowed && mentionsRef(value)) {
+        ctx.addIssue({ code: 'custom', path: ['steps', si, 'tasks', ti, 'args', key],
+          message: `${task.tool}.${key} cannot take a task reference like "@S1.1": references work only in run_analysis "inputs" and read_section "section". Give a literal value, or leave this lookup for a later plan revision when the earlier result is known.` });
+      }
+    }
+    for (const ref of refs) {
+      const at = order.indexOf(ref);
+      if (ref === task.id || (at >= 0 && at > order.indexOf(task.id))) {
+        ctx.addIssue({ code: 'custom', path: ['steps', si, 'tasks', ti, 'args'], message: `${task.id} refers to @${ref}, which does not run before it; reference an earlier task` });
+      }
+    }
     if (!task.id.startsWith(`${step.id}.`)) ctx.addIssue({ code: 'custom', message: `task ${task.id} must be numbered under its step ${step.id}`, path: ['steps', si, 'tasks', ti, 'id'] });
     if (taskIds.has(task.id)) ctx.addIssue({ code: 'custom', message: `duplicate task id ${task.id}`, path: ['steps', si, 'tasks', ti, 'id'] });
     taskIds.add(task.id);

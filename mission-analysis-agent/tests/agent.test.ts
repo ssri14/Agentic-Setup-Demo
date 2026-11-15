@@ -456,3 +456,58 @@ describe('claim check (document evidence interpretation)', () => {
     expect(results).toEqual(['search_documents', 'get_table']);
   });
 });
+
+describe('task references between dependent tool calls', () => {
+  const question = 'What is the purpose of HLT and which subsystems does it depend on? Cite the section.';
+  const title = ['{"title":"HLT purpose"}'];
+  const verified = JSON.stringify({ verdicts: [{ hypothesis: 'H1', status: 'supported', confidence: 'high', evidence_for: ['E1'], note: 'section text' }], next: 'report', reason: 'answered' });
+  const plan = (second: Record<string, unknown>) => JSON.stringify({ objective: 'Find and read the HLT section', hypotheses: [{ id: 'H1', statement: 'The documents describe HLT' }],
+    steps: [{ id: 'S1', title: 'Find and read', tasks: [{ id: 'S1.1', tool: 'search_documents', args: { query: 'hlt_overall_state hlt_warning_count telemetry dictionary', limit: 2 }, purpose: 'find HLT' }, second] }] });
+  const events = async (runId: string) => store.events.list(runId);
+
+  it('resolves read_section "@S1.1" to the section of the search result, after the search, in the same step', async () => {
+    const model = new ScriptedModel({ title, planner: [plan({ id: 'S1.2', tool: 'read_section', args: { section: '@S1.1' }, purpose: 'read the section the search found' })], verifier: [verified], reporter: [report] });
+    const run = await runner(model).start(chat, user, mission, question);
+    const done = await settle(run.id);
+    expect(done.status, done.error).toBe('complete');
+    const ev = await events(run.id);
+    expect(ev.find((e) => e.type === 'reference_resolved')!.payload).toMatchObject({ task: 'S1.2', ref: 'S1.1', field: 'section', value: 'SEC-04' });
+    const calls = ev.filter((e) => e.type === 'tool_called').map((e) => e.payload as { task: string; args: { section?: string } });
+    expect(calls.map((c) => c.task)).toEqual(['S1.1', 'S1.2']);
+    expect(calls[1].args.section).toBe('SEC-04');
+    const results = ev.filter((e) => e.type === 'tool_result').map((e) => e.payload as { task: string; ok: boolean });
+    expect(results).toEqual([expect.objectContaining({ task: 'S1.1', ok: true }), expect.objectContaining({ task: 'S1.2', ok: true })]);
+    expect(ev.some((e) => e.type === 'node_entered' && (e.payload as { node: string }).node === 'recover')).toBe(false);
+  });
+
+  it('rejects a reference in any other argument at planning time, so the planner fixes the plan', async () => {
+    const bad = plan({ id: 'S1.2', tool: 'get_table', args: { contains: '@S1.1' }, purpose: 'table of what the search found' });
+    const good = plan({ id: 'S1.2', tool: 'get_table', args: { contains: 'HLT', max_tables: 1 }, purpose: 'HLT row' });
+    const model = new ScriptedModel({ title, planner: [bad, good], verifier: [verified], reporter: [report] });
+    const run = await runner(model).start(chat, user, mission, question);
+    expect((await settle(run.id)).status).toBe('complete');
+    const retry = model.calls.filter((c) => c.role === 'planner')[1].messages.at(-1)!.content;
+    expect(retry).toContain('get_table.contains cannot take a task reference like "@S1.1"');
+  });
+
+  it('rejects a reference to a task that runs later', async () => {
+    const forward = JSON.stringify({ objective: 'Read then search', steps: [{ id: 'S1', title: 'x', tasks: [
+      { id: 'S1.1', tool: 'read_section', args: { section: '@S1.2' }, purpose: 'read' }, { id: 'S1.2', tool: 'search_documents', args: { query: 'HLT' }, purpose: 'find' }] }] });
+    const model = new ScriptedModel({ title, planner: [forward, plan({ id: 'S1.2', tool: 'read_section', args: { section: '@S1.1' }, purpose: 'read' })], verifier: [verified], reporter: [report] });
+    const run = await runner(model).start(chat, user, mission, question);
+    expect((await settle(run.id)).status).toBe('complete');
+    expect(model.calls.filter((c) => c.role === 'planner')[1].messages.at(-1)!.content).toContain('S1.1 refers to @S1.2, which does not run before it');
+  });
+
+  it('fails clearly when the referenced task found nothing', async () => {
+    const nothing = JSON.stringify({ objective: 'Search for something absent', hypotheses: [{ id: 'H1', statement: 'The documents describe it' }], steps: [
+      { id: 'S1', title: 'Search', tasks: [{ id: 'S1.1', tool: 'search_documents', args: { query: 'zzzzqq xxxxyy' }, purpose: 'find' }, { id: 'S1.2', tool: 'read_section', args: { section: '@S1.1' }, purpose: 'read' }] }] });
+    const skip = JSON.stringify({ action: 'skip', reason: 'nothing to read' });
+    const model = new ScriptedModel({ title, planner: [nothing], verifier: [(m) => (m[0].content.includes('You are the RECOVERY') ? skip : verified)], reporter: [report] });
+    const run = await runner(model).start(chat, user, mission, question);
+    expect((await settle(run.id)).status).toBe('complete');
+    const failed = (await events(run.id)).find((e) => e.type === 'tool_result' && (e.payload as { task: string }).task === 'S1.2')!.payload as { ok: boolean; error: string };
+    expect(failed).toMatchObject({ ok: false, error: 'S1.1 found no section to read (it returned no document results)' });
+  });
+});
+

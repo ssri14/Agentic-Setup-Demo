@@ -28,7 +28,7 @@ import type { EventSink } from './events.js';
 import { completeJson, type ChatMessage, type ChatModel, type ModelRole } from './llm.js';
 import { MAX_CONTENT, labelPipeTables, quoteFound, relatedLines, tableContent } from './evidence.js';
 import { analystMessages, checkerMessages, missionBlock, plannerMessages, recoveryMessages, reporterMessages, toolCatalog, verifierMessages, type MissionContext } from './prompts.js';
-import { AnalystOutput, CheckOutput, PlanOutput, ReportOutput, VerifyOutput, recoverSchema, type Claim, type ReportOutput as ReportValue } from './schemas.js';
+import { AnalystOutput, CheckOutput, PlanOutput, ReportOutput, TASK_REF, VerifyOutput, recoverSchema, taskRefs, type Claim, type ReportOutput as ReportValue } from './schemas.js';
 
 export interface Budgets { maxToolCalls: number; maxRevisions: number; maxLlmCalls: number; maxSeconds: number; maxClarifications: number; parallelTasks: number; maxRetries: number; maxRecoveries: number }
 export const DEFAULT_BUDGETS: Budgets = { maxToolCalls: 48, maxRevisions: 5, maxLlmCalls: 100, maxSeconds: 900, maxClarifications: 1, parallelTasks: 3, maxRetries: 2, maxRecoveries: 10 };
@@ -246,7 +246,9 @@ function renumber(plan: PlanOutput, nextStep: number) {
     id: stepMap.get(step.id)!, title: step.title,
     depends_on: step.depends_on.map((d) => stepMap.get(d) ?? d),
     tasks: step.tasks.map((t) => ({ ...t, id: taskMap.get(t.id)!,
-      args: t.tool === 'run_analysis' ? { ...t.args, inputs: (t.args.inputs as string[]).map((r) => (taskMap.has(r.slice(1)) ? `@${taskMap.get(r.slice(1))}` : r)) } : t.args })),
+      args: t.tool === 'run_analysis' ? { ...t.args, inputs: (t.args.inputs as string[]).map((r) => (taskMap.has(r.slice(1)) ? `@${taskMap.get(r.slice(1))}` : r)) }
+        : t.tool === 'read_section' && typeof t.args.section === 'string' && TASK_REF.test(t.args.section) && taskMap.has(t.args.section.slice(1)) ? { ...t.args, section: `@${taskMap.get(t.args.section.slice(1))}` }
+        : t.args })),
   }));
 }
 
@@ -364,6 +366,13 @@ export function buildAgent(ctx: AgentContext) {
         counters.toolCalls++;
         throw new ToolError(`injected fault: ${task.tool} timed out after 30 s (simulated outage for the demo)`);
       }
+      if (task.tool === 'read_section' && typeof task.args.section === 'string' && TASK_REF.test(task.args.section)) {
+        const ref = task.args.section.slice(1);
+        const found = [...evidencePool, ...s.evidence].filter((e) => e.task === ref).find((e) => e.section);
+        if (!found) throw new ToolError(`${ref} found no section to read (${s.tasks[ref] ? `it ${s.tasks[ref].status === 'succeeded' ? 'returned no document results' : s.tasks[ref].status}` : 'no such task'})`);
+        args = { ...task.args, section: found.section };
+        await ctx.sink.emit('execute', 'reference_resolved', `${task.id}: @${ref} → ${found.section} (from ${found.id} ${found.label})`, { task: task.id, ref, field: 'section', value: found.section, evidence: found.id });
+      }
       if (task.tool === 'run_analysis') {
         const ids: string[] = [], names: string[] = [];
         for (const ref of task.args.inputs as string[]) {
@@ -425,16 +434,18 @@ export function buildAgent(ctx: AgentContext) {
     const counters = await enter('execute', s);
     const tasks = { ...s.tasks };
     const finished = (stepId: string) => (s.steps[stepId]?.tasks ?? []).every((t) => !['pending', 'executing'].includes(tasks[t]?.status));
-    // An analysis whose input task failed or was skipped cannot run: skip it rather than fail it.
-    for (const t of Object.values(tasks).filter((x) => x.status === 'pending' && x.tool === 'run_analysis')) {
-      const bad = (t.args.inputs as string[]).map((r) => tasks[r.slice(1)]).find((src) => src && (src.status === 'failed' || src.status === 'skipped'));
+    // A task whose referenced task failed or was skipped cannot run: skip it rather than fail it.
+    for (const t of Object.values(tasks).filter((x) => x.status === 'pending' && taskRefs(x).length)) {
+      const bad = taskRefs(t).map((r) => tasks[r]).find((src) => src && (src.status === 'failed' || src.status === 'skipped'));
       if (bad) {
         tasks[t.id] = { ...t, status: 'skipped', summary: `input ${bad.id} ${bad.status}` };
         await ctx.sink.emit('execute', 'task_status', `${t.id} skipped (input ${bad.id} ${bad.status})`, { task: t.id, step: t.step, status: 'skipped', summary: tasks[t.id].summary });
       }
     }
     const pending = Object.values(tasks).filter((t) => t.status === 'pending');
-    const ready = pending.filter((t) => s.steps[t.step].depends_on.every((d) => !s.steps[d] || finished(d)));
+    // Ready: its step's dependencies are finished, and so is every task it references (even one in its own step).
+    const done = (id: string) => !tasks[id] || !['pending', 'executing'].includes(tasks[id].status);
+    const ready = pending.filter((t) => s.steps[t.step].depends_on.every((d) => !s.steps[d] || finished(d)) && taskRefs(t).every(done));
     const limits = [...s.limits];
     if (!ready.length) {
       for (const t of pending) {

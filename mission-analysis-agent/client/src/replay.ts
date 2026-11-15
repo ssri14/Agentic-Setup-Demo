@@ -28,7 +28,7 @@ export type Category = 'llm' | 'tool' | 'verify' | 'decision' | 'plan' | 'clarif
 export function category(type: string, payload: Record<string, unknown> = {}): Category {
   if (type === 'node_failed' || (type === 'tool_result' && payload.ok === false) || (type === 'task_status' && payload.status === 'failed') || (type === 'llm_call' && payload.injected)) return 'fail';
   if (type === 'llm_call') return 'llm';
-  if (type === 'tool_called' || type === 'tool_result' || type === 'task_status') return 'tool';
+  if (type === 'tool_called' || type === 'tool_result' || type === 'task_status' || type === 'reference_resolved') return 'tool';
   if (type === 'verification' || type === 'hypothesis_updated') return 'verify';
   if (type === 'decision' || type === 'budget_warning') return 'decision';
   if (type === 'plan_created' || type === 'plan_revised') return 'plan';

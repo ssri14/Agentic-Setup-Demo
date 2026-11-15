@@ -2,7 +2,7 @@
 
 A web application for investigating a mission's documents and telemetry with an agent that plans, executes, verifies, recovers and replans, and whose every answer can be replayed. User and administrator guides: [`../docs/05-users.md`](../docs/05-users.md), [`../docs/04-administrators.md`](../docs/04-administrators.md). This README is the technical reference.
 
-**Version 1.0.2.**
+**Version 1.0.3.**
 
 | Works now | Arrives later |
 |---|---|
@@ -39,7 +39,7 @@ intake → plan → execute → verify ─┬→ execute   continue with the pla
 ```
 
 - **Plan** (planner model): an objective, competing hypotheses with what would confirm or refute each, and 2–6 steps of 1–4 tool tasks with dependencies. Tool arguments are validated against each tool's schema; invalid plans go back to the model with the errors.
-- **Execute**: ready tasks run in parallel (at most 3). `run_analysis` tasks name their inputs by task (`@S2.1`); the analyst model writes the Python when those inputs exist, and gets one chance to fix failing code.
+- **Execute**: ready tasks run in parallel (at most 3). Tasks can use earlier results through task references: `run_analysis` names its inputs (`@S2.1`), and the analyst model writes the Python when those inputs exist (one chance to fix failing code); `read_section` accepts `"section": "@S1.1"`, resolved to the section of that task's best result. A task waits for the tasks it references, even in its own step, and is skipped if they failed. References anywhere else are rejected when the plan is validated.
 - **Verify** (verifier model): after each step, rates every hypothesis (supported, refuted, conflicting, insufficient) with the rule and evidence it rests on, and chooses continue, replan, clarify or report.
 - **Report** (reporter model): the answer from verified findings, citing evidence as `[E3]`; citations that do not exist are dropped.
 - **Check claims** (checker model): the draft lists each factual claim with its evidence and the exact words quoted. Each quote must be found in the cited evidence's text (tables are shown to every model as labelled rows); the checker then looks for evidence that contradicts each claim, seeing the lines anywhere in the evidence that mention the same identifiers. Failures go back to the reporter or the planner, at most twice; confidence is capped by what was verified, and claims that still fail are flagged in the answer. See `server/src/agent/evidence.ts`.

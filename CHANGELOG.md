@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.3 — 2026-11-15
+
+- **Fix: references between dependent tool calls.** The planner wrote `read_section {"section": "@S1.1"}` ("read the section the search found"), in the same step as the search. References were supported only in `run_analysis` inputs, so the literal "@S1.1" failed ("No section @S1.1") and the run stopped early with lowered confidence.
+  - `read_section` now accepts `"section": "@S1.1"`, resolved when it runs to the section of that task's best result (a `reference_resolved` event records the value and the evidence it came from).
+  - A task waits for every task it references, even one in its own step; it is skipped if they failed; a reference that yields nothing fails with a clear message.
+  - A reference in any other argument, or to a task that runs later, is rejected when the plan is validated, so the planner corrects the plan instead of failing at run time. The tool catalog states where references are allowed.
+- 4 new tests (55 in total).
+
 ## 1.0.2 — 2026-11-15
 
 Fixes an evidence-interpretation failure: asked which subsystems HLT depends on, the agent answered "DAQ, COM and SUP" (the heading of a telemetry-dictionary page) with high confidence, although the SEC-03 table row it had retrieved says PWR, THM, ENV, ACT; it repeated the error when challenged.

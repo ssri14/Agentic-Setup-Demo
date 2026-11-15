@@ -20,8 +20,11 @@ export function toolCatalog(hasTelemetry: boolean): string {
     if (t.name === 'run_analysis') {
       return `- run_analysis {${signature(AnalysisTaskArgs)}}\n  Python analysis (pandas, numpy, matplotlib) in a sandbox over CSV results of earlier tasks. Give inputs as task references such as "@S2.1" (tasks that return CSV: get_table, telemetry_window, events_window, run_analysis) and a precise goal; an analyst writes and runs the code when the inputs exist.`;
     }
+    if (t.name === 'read_section') {
+      return `- ${t.name} {${signature(t.schema)}}\n  ${t.description} "section" may also be a task reference such as "@S1.1": the section of that task's best result (for example the top passage of a search_documents task). The referenced task runs first, even in the same step.`;
+    }
     return `- ${t.name} {${signature(t.schema)}}\n  ${t.description}`;
-  }).join('\n');
+  }).join('\n') + '\nTask references ("@S1.1") are accepted only in run_analysis "inputs" and read_section "section". Every other argument needs a literal value; if it depends on a result you do not have yet, plan that lookup in a later revision.';
 }
 
 export interface MissionContext { name: string; description: string; sections: string[]; runs: string[]; subsystems: string[]; hasTelemetry: boolean }
@@ -69,7 +72,7 @@ Return JSON only.`;
 <data name="observations so far">\n${input.revision.observations}\n</data>
 <data name="verification">\n${input.revision.verdicts}\n</data>
 Why a new plan is needed: ${input.revision.reason}
-Plan only the remaining work. Number new steps from S${input.revision.nextStep}. You may reference outputs of completed tasks (for example "@S2.1") in run_analysis inputs. Keep or revise the hypotheses; give the full hypotheses list.` : '',
+Plan only the remaining work. Number new steps from S${input.revision.nextStep}. You may reference outputs of completed tasks (for example "@S2.1") in run_analysis inputs and read_section "section". Keep or revise the hypotheses; give the full hypotheses list.` : '',
   ].filter(Boolean).join('\n\n');
   return [{ role: 'system', content: system }, { role: 'user', content: user }];
 }
