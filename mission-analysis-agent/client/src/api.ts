@@ -39,7 +39,10 @@ export interface EvidenceItem { id: string; kind: string; ref: string; label: st
 export interface Report {
   conclusion: string; confidence: 'high' | 'medium' | 'low'; confidence_reason: string; evidence: EvidenceItem[];
   rejected_alternatives: { hypothesis: string; reason: string }[]; uncertainties: string[]; limits: string[];
+  claims?: CheckedClaim[]; checks?: { rounds: number; checker: 'ok' | 'failed' | 'skipped'; supported: number; total: number };
 }
+export type ClaimVerdict = 'supported' | 'contradicted' | 'unsupported' | 'unchecked';
+export interface CheckedClaim { id: string; text: string; evidence: string[]; quote: string; verdict: ClaimVerdict; quote_found: boolean; explanation: string; contradicting: { evidence: string; quote: string }[] }
 export interface Message { id: string; chatId: string; role: 'user' | 'assistant'; text: string; runId?: string; report?: Report | null; createdAt: string }
 export interface RunInfo { id: string; status: 'running' | 'waiting' | 'complete' | 'failed' | 'stopped' | 'interrupted'; question: string; createdAt: string; finishedAt?: string; error?: string; view?: RunView; totals?: Record<string, number>; models?: Record<string, string> }
 export interface RunEvent { runId: string; seq: number; at: string; node: string; type: string; summary: string; payload: Record<string, unknown> }

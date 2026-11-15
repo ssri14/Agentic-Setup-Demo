@@ -397,3 +397,14 @@ ul.tight { margin: 4px 0; padding-left: 18px; font-size: 13px; }
 .answer, .msg, .bubble, .user-msg, .task-note, .hyp-text, .task-purpose { overflow-wrap: anywhere; }
 .answer pre, .json { max-width: 100%; overflow-x: auto; }
 .answer table { display: block; max-width: 100%; overflow-x: auto; }
+
+/* Claim check */
+.claims-box.all-ok > summary { color: var(--ok); }
+.claims-box.some-bad > summary { color: var(--warn); }
+ul.claims { list-style: none; padding-left: 0 !important; display: grid; gap: 8px; }
+.claim { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 6px; font-size: 13.5px; }
+.claim-mark { font-weight: 800; }
+.claim.v-supported .claim-mark { color: var(--ok); }
+.claim.v-contradicted .claim-mark, .claim.v-unsupported .claim-mark { color: #d1453b; }
+.claim-quote { color: var(--muted); font-size: 12.5px; font-style: italic; margin-top: 2px; }
+.claim-why { color: #d1453b; font-size: 12.5px; margin-top: 2px; }

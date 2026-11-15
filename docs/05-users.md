@@ -76,12 +76,19 @@ The answer card contains:
 - **Conclusion**, with citations like **[E3]**. Every factual claim should rest on an evidence item.
 - **Confidence**, *high*, *medium* or *low*, with the reason.
 - **Evidence**: the cited items, such as document passages, sections, tables, figures, telemetry windows, run summaries and analyses. Click one to open it in the side drawer. There you see the passage with its page and section, the telemetry window with a small chart, or the analysis output and chart. Items backed by data have a **Download the data** link.
+- **Claims checked**: every factual statement of the answer, with the evidence it rests on and the exact words quoted from that evidence. Before an answer is shown, each claim is checked twice:
+  - **quote check**: the quoted words must really be in the cited evidence;
+  - **checker model**: no evidence may contradict the claim. For example, a page heading that lists subsystem names is not accepted as evidence of a dependency, when a table row says otherwise.
+
+  A failed claim sends the answer back to be rewritten from the evidence, or back to planning to fetch what is missing, up to two times. The summary line says whether all claims passed and how many correction rounds were needed. A claim that still fails is marked ✗, listed under **Not verified against the evidence** at the end of the conclusion, and the confidence is lowered.
 - **Rejected alternatives**: hypotheses the evidence ruled out, and why.
 - **Uncertainties**: what the agent could not establish, including any limit it hit (for example *tool-call budget reached*) or a step that failed and could not be recovered.
 
 How to read an answer critically:
 
-- A **low** confidence, a long uncertainties list, or a conclusion with few citations means you should check the evidence yourself before relying on it.
+- Confidence is capped by the claim check. *High* requires every claim verified, no unresolved contradiction and no investigation limit; otherwise the reason says why it was lowered.
+- A **low** confidence, a long uncertainties list, or an unverified claim means you should check the evidence yourself before relying on it.
+- If you think an answer is wrong, say so in a follow-up. The agent treats its earlier answers as claims to re-check against the sources, not as evidence.
 - *Partial* answers say so explicitly.
 
 ## Replaying an answer
@@ -112,7 +119,7 @@ Stepping back is exact: each position is rebuilt from the start.
 
 **Panels**
 
-1. **Agent graph.** The agent's fixed loop: *Intake → Plan → Execute tools → Verify → Report*, with *Ask user* and *Recover* beside it.
+1. **Agent graph.** The agent's fixed loop: *Intake → Plan → Execute tools → Verify → Report (draft) → Check claims*, with *Ask user* and *Recover* beside it. A failed claim check shows as Check claims → Report (rewrite) or Check claims → Plan (investigate further).
    - The current node is highlighted, and nodes visited so far are filled.
    - Each arrow shows how many times it was taken. A replan shows as Verify → Plan; a failure shows as an arrow into the red **Recover** node.
 2. **Plan.** The plan as it stood at that moment.

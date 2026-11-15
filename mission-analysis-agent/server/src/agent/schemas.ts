@@ -77,6 +77,15 @@ export type VerifyOutput = z.output<typeof VerifyOutput>;
 
 export const AnalystOutput = z.object({ code: z.string().min(5).max(15000), explanation: z.string().max(600).default('') });
 
+/** One atomic factual statement of the answer, tied to the exact words of the evidence that states it. */
+export const Claim = z.object({
+  id: z.string().regex(/^C\d+$/),
+  text: z.string().min(3).max(500),
+  evidence: z.array(z.string().regex(/^E\d+$/)).max(4).default([]),
+  quote: z.string().max(500).default(''),
+});
+export type Claim = z.output<typeof Claim>;
+
 export const ReportOutput = z.object({
   conclusion: z.string().min(10).max(6000),
   confidence: Confidence,
@@ -84,8 +93,22 @@ export const ReportOutput = z.object({
   evidence: z.array(z.string().regex(/^E\d+$/)).max(20).default([]),
   rejected_alternatives: z.array(z.object({ hypothesis: z.string().max(400), reason: z.string().max(600) })).max(6).default([]),
   uncertainties: z.array(z.string().max(400)).max(8).default([]),
+  claims: z.array(Claim).max(12).default([]),
 });
 export type ReportOutput = z.output<typeof ReportOutput>;
+
+/** The claim checker's verdict on each claim of a draft answer. */
+export const CheckOutput = z.object({
+  claims: z.array(z.object({
+    id: z.string().regex(/^C\d+$/),
+    verdict: z.enum(['supported', 'contradicted', 'unsupported']),
+    explanation: z.string().max(800).default(''),
+    contradicting: z.array(z.object({ evidence: z.string().regex(/^E\d+$/), quote: z.string().min(2).max(500) })).max(4).default([]),
+  })),
+  next: z.enum(['accept', 'rewrite', 'investigate']),
+  guidance: z.string().max(800).default(''),
+});
+export type CheckOutput = z.output<typeof CheckOutput>;
 
 /** The recovery model's decision. Corrected arguments, when given, are checked against the failed task's tool schema. */
 export function recoverSchema(taskTools: Record<string, string>) {

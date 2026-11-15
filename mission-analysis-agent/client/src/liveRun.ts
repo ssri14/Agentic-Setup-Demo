@@ -7,7 +7,7 @@ export interface LiveState {
 }
 export const initialLive = (): LiveState => ({ stage: 'Starting…', plans: [], hypotheses: [], clarification: null, finished: false, lastSeq: 0, notes: [] });
 
-const STAGES: Record<string, string> = { intake: 'Reading the mission context', plan: 'Planning the investigation', execute: 'Running tools', verify: 'Verifying the evidence', report: 'Writing the answer', clarify: 'Waiting for your answer', recover: 'Recovering from a failure' };
+const STAGES: Record<string, string> = { intake: 'Reading the mission context', plan: 'Planning the investigation', execute: 'Running tools', verify: 'Verifying the evidence', report: 'Writing the answer', check: 'Checking each claim against the evidence', clarify: 'Waiting for your answer', recover: 'Recovering from a failure' };
 const RECOVERY: Record<string, string> = { retry: 'retry', skip: 'continue without the failed task', revise: 'revise the plan', clarify: 'ask you', finish: 'answer with what it has' };
 const ROLE: Record<string, string> = { planner: 'Planner', verifier: 'Verifier', analyst: 'Analyst writing code', reporter: 'Reporter' };
 
@@ -33,8 +33,14 @@ export function applyEvent(state: LiveState, e: RunEvent): LiveState {
       return { ...s, hypotheses: exists ? s.hypotheses.map((x) => (x.id === h.id ? h : x)) : [...s.hypotheses, h] };
     }
     case 'verification': return { ...s, stage: `Verified ${p.hypothesis}: ${p.status}` };
+    case 'claim_check': {
+      const claims = (p.claims as { verdict: string }[]) ?? [];
+      const bad = claims.filter((c) => c.verdict === 'contradicted' || c.verdict === 'unsupported').length;
+      return bad ? { ...s, stage: e.summary, notes: [...s.notes, `✗ Claim check: ${e.summary.replace(/^Round \d+: /, '')}; correcting the answer`] } : { ...s, stage: e.summary };
+    }
     case 'node_failed': return { ...s, stage: e.summary, notes: [...s.notes, `⚠ ${e.summary}`] };
     case 'decision':
+      if (p.by === 'check') return { ...s, stage: p.route === 'plan' ? 'Investigating further after the claim check' : 'Rewriting the answer from the evidence' };
       if (p.by === 'recover') return { ...s, stage: `Recovery: ${RECOVERY[String(p.action)] ?? p.action}`, notes: [...s.notes, `↻ Recovery chose to ${RECOVERY[String(p.action)] ?? p.action}: ${p.reason}`] };
       return { ...s, stage: p.route === 'execute' ? 'Continuing with the plan' : p.route === 'plan' ? `Replanning: ${p.reason}` : p.route === 'report' ? 'Enough evidence; writing the answer' : 'Needs your input' };
     case 'budget_warning': return { ...s, notes: [...s.notes, e.summary] };

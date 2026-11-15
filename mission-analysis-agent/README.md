@@ -2,7 +2,7 @@
 
 A web application for investigating a mission's documents and telemetry with an agent that plans, executes, verifies, recovers and replans, and whose every answer can be replayed. User and administrator guides: [`../docs/05-users.md`](../docs/05-users.md), [`../docs/04-administrators.md`](../docs/04-administrators.md). This README is the technical reference.
 
-**Version 1.0.1.**
+**Version 1.0.2.**
 
 | Works now | Arrives later |
 |---|---|
@@ -33,13 +33,16 @@ A LangGraph.js loop (`server/src/agent/graph.ts`) around plans the model writes:
 intake → plan → execute → verify ─┬→ execute   continue with the plan
            ↑                       ├→ plan      replan (at most 5 revisions)
            └── clarify ←───────────┼→ clarify   ask the user (once per question; the run waits)
-                                   └→ report
+                                   └→ report (draft) → check claims ─┬→ end      every claim verified
+                                                                      ├→ report   rewrite from the evidence
+                                                                      └→ plan     retrieve what is missing
 ```
 
 - **Plan** (planner model): an objective, competing hypotheses with what would confirm or refute each, and 2–6 steps of 1–4 tool tasks with dependencies. Tool arguments are validated against each tool's schema; invalid plans go back to the model with the errors.
 - **Execute**: ready tasks run in parallel (at most 3). `run_analysis` tasks name their inputs by task (`@S2.1`); the analyst model writes the Python when those inputs exist, and gets one chance to fix failing code.
 - **Verify** (verifier model): after each step, rates every hypothesis (supported, refuted, conflicting, insufficient) with the rule and evidence it rests on, and chooses continue, replan, clarify or report.
 - **Report** (reporter model): the answer from verified findings, citing evidence as `[E3]`; citations that do not exist are dropped.
+- **Check claims** (checker model): the draft lists each factual claim with its evidence and the exact words quoted. Each quote must be found in the cited evidence's text (tables are shown to every model as labelled rows); the checker then looks for evidence that contradicts each claim, seeing the lines anywhere in the evidence that mention the same identifiers. Failures go back to the reporter or the planner, at most twice; confidence is capped by what was verified, and claims that still fail are flagged in the answer. See `server/src/agent/evidence.ts`.
 - **Budgets**: 48 tool calls, 5 plan revisions, 100 model calls, 15 minutes per question; override with `AGENT_MAX_TOOL_CALLS`, `AGENT_MAX_REVISIONS`, `AGENT_MAX_MODEL_CALLS` and `AGENT_MAX_MINUTES` in `.env`. When one runs out, the agent reports what it has and lists the limit as an open uncertainty.
 - **Event log**: every node, model call, tool call, task status, verdict and decision is an ordered event in `agent_app.run_events`; the chat streams it live (server-sent events) and the replay plays it back. Prompts and full tool results are kept in `run_blobs`.
 

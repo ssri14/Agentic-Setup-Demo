@@ -14,16 +14,30 @@ const user = { id: 'u1', username: 'analyst', role: 'user', missions: ['brahmast
 type Reply = string | ((messages: ChatMessage[]) => string);
 class ScriptedModel implements ChatModel {
   calls: { role: ModelRole; messages: ChatMessage[] }[] = [];
-  constructor(private script: Partial<Record<ModelRole, Reply[]>>, private delayMs = 0) {}
+  /** `title`, when given, answers the chat-title call so it does not consume the reporter's queue. */
+  constructor(private script: Partial<Record<ModelRole | 'title', Reply[]>>, private delayMs = 0) {}
   async complete(role: ModelRole, messages: ChatMessage[], options: { signal?: AbortSignal } = {}): Promise<Completion> {
     this.calls.push({ role, messages });
     if (this.delayMs) await new Promise((r, j) => { const t = setTimeout(r, this.delayMs); options.signal?.addEventListener('abort', () => { clearTimeout(t); j(new Error('aborted')); }); });
-    const queue = this.script[role] ?? [];
+    const titleCall = role === 'reporter' && messages[0].content.startsWith('Write a short title') && this.script.title;
+    const queue = titleCall ? this.script.title! : this.script[role] ?? (role === 'checker' ? [acceptAllClaims] : []);
     const next = queue.length > 1 ? queue.shift()! : queue[0];
     if (next === undefined) throw new Error(`no scripted reply for ${role}`);
     return { content: typeof next === 'function' ? next(messages) : next, provider: 'lan', model: 'scripted', duration_ms: 1 };
   }
 }
+
+/** Default claim checker: every claim supported. */
+const acceptAllClaims: Reply = (m) => JSON.stringify({ claims: [...m[1].content.matchAll(/^(C\d+): /gm)].map((x) => ({ id: x[1], verdict: 'supported', explanation: 'stated by the quote' })), next: 'accept' });
+/** The content lines of one evidence item as shown in a prompt. */
+const evidenceLines = (prompt: string, id: string) => { const m = prompt.match(new RegExp(`^${id} \\[[^\\n]*\\n((?:  .*\\n?)*)`, 'm')); return m ? m[1].split('\n').map((l) => l.trim()).filter(Boolean) : []; };
+/** Adds one claim per cited evidence item, quoting that item's first content line. */
+const withClaims = (json: string): Reply => (m) => {
+  const r = JSON.parse(json);
+  const ids = [...new Set<string>(r.conclusion.match(/E\d+/g) ?? [])];
+  r.claims = ids.map((id, i) => ({ id: `C${i + 1}`, text: `fact ${i + 1} of the conclusion`, evidence: [id], quote: (evidenceLines(m[1].content, id)[0] ?? '').slice(0, 120) })).filter((c) => c.quote);
+  return JSON.stringify(r);
+};
 
 const plan1 = JSON.stringify({
   objective: 'Find runs with missing source samples and characterise the loss',
@@ -39,8 +53,10 @@ const plan1 = JSON.stringify({
 const verifyContinue = JSON.stringify({ verdicts: [{ hypothesis: 'H1', status: 'insufficient', confidence: 'low', evidence_for: [], note: 'need telemetry' }], next: 'continue', reason: 'telemetry still to read' });
 const verifyReport = JSON.stringify({ verdicts: [{ hypothesis: 'H1', status: 'supported', confidence: 'high', rule: 'R05', evidence_for: ['E4'], note: 'gap of 50 samples' },
   { hypothesis: 'H2', status: 'refuted', confidence: 'high', evidence_against: ['E4'], note: 'rows absent, not backfilled' }], next: 'report', reason: 'question answered' });
-const report = JSON.stringify({ conclusion: 'BM-RUN-0010 lost 50 source samples between 322 and 346.5 s [E4]; this is acquisition loss, not delayed delivery [E2].',
+const reportJson = JSON.stringify({ conclusion: 'BM-RUN-0010 lost 50 source samples between 322 and 346.5 s [E4]; this is acquisition loss, not delayed delivery [E2].',
   confidence: 'high', confidence_reason: 'Direct sample-index gap and matching counter', evidence: ['E4', 'E2', 'E99'], rejected_alternatives: [{ hypothesis: 'Delivery delay', reason: 'no backfilled rows' }], uncertainties: [] });
+const report = withClaims(reportJson);
+const reportFor = (m: ChatMessage[]) => withClaims(reportJson)(m) as string;
 const analyst = JSON.stringify({ code: "df = load_input('S2_1')\nprint(len(df))", explanation: 'count rows' });
 
 let store: MemoryStore;
@@ -71,7 +87,7 @@ const types = async (runId: string) => (await store.events.list(runId)).map((e) 
 describe('agent', () => {
   it('plans, executes in dependency order, analyses, verifies and reports with evidence', async () => {
     const model = new ScriptedModel({ planner: [plan1], verifier: [verifyContinue, verifyContinue, verifyReport], analyst: [analyst],
-      reporter: [(m) => (m[0].content.startsWith('Write a short title') ? JSON.stringify({ title: '"Source sample loss in BM-RUN-0010."' }) : report)] });
+      reporter: [(m) => (m[0].content.startsWith('Write a short title') ? JSON.stringify({ title: '"Source sample loss in BM-RUN-0010."' }) : reportFor(m))] });
     const run = await runner(model).start(chat, user, mission, 'Which runs lost source samples, and was it delivery delay?');
     const done = await settle(run.id);
     expect(done.status, done.error).toBe('complete');
@@ -185,7 +201,7 @@ describe('agent', () => {
   });
 
   it('reports with a stated limit when the tool budget runs out', async () => {
-    const model = new ScriptedModel({ planner: [plan1], verifier: [verifyContinue], reporter: [(m) => { expect(m[1].content).toContain('tool-call budget (2) reached'); return report; }] });
+    const model = new ScriptedModel({ planner: [plan1], verifier: [verifyContinue], reporter: [(m) => { expect(m[1].content).toContain('tool-call budget (2) reached'); return reportFor(m); }] });
     const run = await runner(model, { ...DEFAULT_BUDGETS, maxToolCalls: 2 }).start(chat, user, mission, 'Budget test');
     const done = await settle(run.id);
     expect(done.status, done.error).toBe('complete');
@@ -263,7 +279,7 @@ describe('recovery', () => {
     const events = await store.events.list(run.id);
     expect(events.find((e) => e.type === 'node_failed')!.payload).toMatchObject({ node: 'plan' });
     expect((await decisions(run.id))[0]).toMatchObject({ by: 'recover', action: 'retry', route: 'plan' });
-    expect(events.filter((e) => e.type === 'node_entered').map((e) => (e.payload as { node: string }).node)).toEqual(['intake', 'plan', 'recover', 'plan', 'execute', 'verify', 'report']);
+    expect(events.filter((e) => e.type === 'node_entered').map((e) => (e.payload as { node: string }).node)).toEqual(['intake', 'plan', 'recover', 'plan', 'execute', 'verify', 'report', 'check']);
   });
 
   it('continues without a failed task when the recovery model says so', async () => {
@@ -293,7 +309,7 @@ describe('recovery', () => {
   it('finishes with a partial answer when the recovery model itself fails', async () => {
     await store.settings.set('fault_injection', { enabled: true, tool: 'list_runs', toolFailures: 1, plannerFailures: 0 });
     const model = new ScriptedModel({ planner: [runsPlan], verifier: [verifierRouter(['not json'], [verifyReport])],
-      reporter: [(m) => { expect(m[1].content).toContain('the recovery model failed'); return report; }] });
+      reporter: [(m) => { expect(m[1].content).toContain('the recovery model failed'); return reportFor(m); }] });
     const run = await runner(model).start(chat, user, mission, 'Which runs lost samples?');
     const done = await settle(run.id);
     expect(done.status, done.error).toBe('complete');
@@ -311,5 +327,132 @@ describe('recovery', () => {
     expect(answer.text).toMatch(/A full answer could not be written/);
     expect(answer.text).toContain('H1 BM-RUN-0010 lost samples at the source: supported (high)');
     expect((answer.report as { confidence: string }).confidence).toBe('low');
+  });
+});
+
+describe('claim check (document evidence interpretation)', () => {
+  // The SEC-04 dictionary page heading "HLT, DAQ, COM and SUP" lists subsystems; it says nothing about dependencies.
+  // The SEC-03 group D table row states: HLT depends on PWR, THM, ENV, ACT.
+  const question = 'What is the purpose of the Health Aggregation (HLT) subsystem, and which subsystems does it depend on?';
+  const hltPlan = JSON.stringify({ objective: 'Find HLT purpose and dependencies', hypotheses: [{ id: 'H1', statement: 'The subsystem reference states HLT dependencies' }],
+    steps: [{ id: 'S1', title: 'Read the documents', tasks: [
+      { id: 'S1.1', tool: 'search_documents', args: { query: 'hlt_overall_state hlt_warning_count telemetry dictionary', limit: 2 }, purpose: 'HLT channels' },
+      { id: 'S1.2', tool: 'get_table', args: { contains: 'HLT', max_tables: 1 }, purpose: 'HLT row of the subsystem reference' }] }] });
+  const verified = JSON.stringify({ verdicts: [{ hypothesis: 'H1', status: 'supported', confidence: 'high', evidence_for: ['E3'], note: 'table row' }], next: 'report', reason: 'answered' });
+  /** E-number of the first evidence whose prompt content contains the text. */
+  const idWith = (prompt: string, text: string) => [...prompt.matchAll(/^(E\d+) \[/gm)].map((x) => x[1]).find((id) => evidenceLines(prompt, id).some((l) => l.includes(text)))!;
+  const wrongDraft: Reply = (m) => {
+    const heading = idWith(m[1].content, 'HLT, DAQ, COM and SUP');
+    return JSON.stringify({ conclusion: `HLT aggregates subsystem health and depends on DAQ, COM and SUP [${heading}].`, confidence: 'high', confidence_reason: 'documented', evidence: [heading],
+      claims: [{ id: 'C1', text: 'HLT depends on DAQ, COM and SUP', evidence: [heading], quote: 'HLT, DAQ, COM and SUP' }] });
+  };
+  const rightDraft: Reply = (m) => {
+    expect(m[1].content).toContain('Your previous draft failed the claim check');
+    const row = idWith(m[1].content, 'Depends on = PWR, THM, ENV, ACT');
+    return JSON.stringify({ conclusion: `HLT (Health Aggregation) collates warnings and degraded-health classifications; it depends on PWR, THM, ENV and ACT [${row}].`, confidence: 'high', confidence_reason: 'table row', evidence: [row],
+      claims: [{ id: 'C1', text: 'HLT depends on PWR, THM, ENV and ACT', evidence: [row], quote: 'ID = HLT; Subsystem = Health Aggregation; … Depends on = PWR, THM, ENV, ACT' },
+        { id: 'C2', text: 'HLT collates warnings and degraded-health classifications', evidence: [row], quote: 'Collated warnings and degraded-health classifications' }] });
+  };
+  /** A checker that does what the prompt asks: C1 about dependencies is contradicted by the table row it is shown. */
+  const strictChecker: Reply = (m) => {
+    const prompt = m[1].content;
+    const ids = [...prompt.matchAll(/^(C\d+): (.*)$/gm)];
+    return JSON.stringify({ claims: ids.map(([, id, text]) => {
+      const wrong = /DAQ, COM and SUP/.test(text);
+      const row = prompt.match(/(E\d+): Row \d+: ID = HLT;[^\n]*Depends on = PWR, THM, ENV, ACT/);
+      return wrong ? { id, verdict: 'contradicted', explanation: 'the heading lists subsystems; the table row states the dependencies', contradicting: [{ evidence: row![1], quote: 'Depends on = PWR, THM, ENV, ACT' }] }
+        : { id, verdict: 'supported', explanation: 'stated by the row' };
+    }), next: ids.some(([, , text]) => /DAQ, COM and SUP/.test(text)) ? 'rewrite' : 'accept', guidance: 'use the SEC-03 group D row' });
+  };
+
+  it('shows tables to the models as labelled rows, with the row next to the claim', async () => {
+    const model = new ScriptedModel({ title: ['{"title":"HLT purpose and dependencies"}'], planner: [hltPlan], verifier: [verified], reporter: [wrongDraft, rightDraft], checker: [strictChecker] });
+    const run = await runner(model).start(chat, user, mission, question);
+    expect((await settle(run.id)).status).toBe('complete');
+    const checkPrompt = model.calls.find((c) => c.role === 'checker')!.messages[1].content;
+    expect(checkPrompt).toContain('quote found in');                                     // the heading is really in the passage...
+    expect(checkPrompt).toMatch(/lines in the evidence that mention the same identifiers:[\s\S]*Row 1: ID = HLT; Subsystem = Health Aggregation;[^\n]*Depends on = PWR, THM, ENV, ACT/);
+    const reporterPrompt = model.calls.find((c) => c.role === 'reporter' && !c.messages[0].content.startsWith('Write a short title'))!.messages[1].content;
+    expect(reporterPrompt).toMatch(/Row 1: ID = HLT;[^\n]*Depends on = PWR, THM, ENV, ACT/);   // no 220-character fragment
+  });
+
+  it('rejects "HLT depends on DAQ, COM and SUP" and publishes the corrected answer (regression)', async () => {
+    const model = new ScriptedModel({ title: ['{"title":"HLT purpose and dependencies"}'], planner: [hltPlan], verifier: [verified], reporter: [wrongDraft, rightDraft], checker: [strictChecker] });
+    const run = await runner(model).start(chat, user, mission, question);
+    const done = await settle(run.id);
+    expect(done.status, done.error).toBe('complete');
+    const events = await store.events.list(run.id);
+    const checks = events.filter((e) => e.type === 'claim_check').map((e) => e.payload as { round: number; claims: { id: string; verdict: string }[] });
+    expect(checks[0].claims).toEqual([expect.objectContaining({ id: 'C1', verdict: 'contradicted' })]);
+    expect(checks[1].claims.every((c) => c.verdict === 'supported')).toBe(true);
+    expect(events.find((e) => e.type === 'decision' && (e.payload as { by: string }).by === 'check')!.payload).toMatchObject({ action: 'rewrite', route: 'report' });
+    const answer = (await store.messages.list(chat.id)).find((m) => m.role === 'assistant')!;
+    expect(answer.text).toContain('PWR, THM, ENV and ACT');
+    expect(answer.text).not.toContain('DAQ, COM and SUP');
+    const r = answer.report as { confidence: string; checks: { supported: number; total: number; rounds: number } };
+    expect(r.confidence).toBe('high');
+    expect(r.checks).toMatchObject({ supported: 2, total: 2, rounds: 2 });
+  });
+
+  it('caps confidence and flags the claim when it still cannot be verified', async () => {
+    const model = new ScriptedModel({ title: ['{"title":"HLT purpose and dependencies"}'], planner: [hltPlan], verifier: [verified], reporter: [wrongDraft], checker: [strictChecker] });
+    const run = await runner(model).start(chat, user, mission, question);
+    expect((await settle(run.id)).status).toBe('complete');
+    const answer = (await store.messages.list(chat.id)).find((m) => m.role === 'assistant')!;
+    const r = answer.report as { confidence: string; confidence_reason: string; uncertainties: string[]; checks: { rounds: number } };
+    expect(r.checks.rounds).toBe(3);                                      // two rewrites, then published as unverified
+    expect(r.confidence).toBe('low');
+    expect(r.confidence_reason).toMatch(/lowered from high: 1 claim\(s\) could not be verified/);
+    expect(answer.text).toMatch(/Not verified against the evidence:\*\* HLT depends on DAQ, COM and SUP \(contradicted by E\d+\)/);
+  });
+
+  it('treats a quote that is not in the cited evidence as unsupported, whatever the checker says', async () => {
+    const invented: Reply = (m) => { const row = idWith(m[1].content, 'Depends on = PWR, THM, ENV, ACT');
+      return JSON.stringify({ conclusion: `HLT depends on CLK [${row}].`, confidence: 'high', confidence_reason: 'from the table', evidence: [row],
+        claims: [{ id: 'C1', text: 'HLT depends on CLK', evidence: [row], quote: 'HLT depends on CLK' }] }); };
+    const model = new ScriptedModel({ title: ['{"title":"HLT purpose and dependencies"}'], planner: [hltPlan], verifier: [verified], reporter: [invented] });   // default checker accepts everything
+    const run = await runner(model).start(chat, user, mission, question);
+    expect((await settle(run.id)).status).toBe('complete');
+    const first = (await store.events.list(run.id)).find((e) => e.type === 'claim_check')!.payload as { claims: { verdict: string; explanation: string }[] };
+    expect(first.claims[0]).toMatchObject({ verdict: 'unsupported', explanation: expect.stringContaining('the quoted words are not in') });
+    expect(((await store.messages.list(chat.id)).find((m) => m.role === 'assistant')!.report as { confidence: string }).confidence).toBe('low');
+  });
+
+  it('ignores a contradiction whose quote is not in the evidence', async () => {
+    const lyingChecker: Reply = (m) => JSON.stringify({ claims: [...m[1].content.matchAll(/^(C\d+): /gm)].map((x) => ({ id: x[1], verdict: 'contradicted', explanation: 'made up', contradicting: [{ evidence: 'E1', quote: 'HLT depends on nothing at all' }] })), next: 'rewrite' });
+    const model = new ScriptedModel({ title: ['{"title":"HLT purpose and dependencies"}'], planner: [hltPlan], verifier: [verified], reporter: [(m) => rightDraft([m[0], { role: 'user', content: `${m[1].content}\nYour previous draft failed the claim check` }])], checker: [lyingChecker] });
+    const run = await runner(model).start(chat, user, mission, question);
+    await settle(run.id);
+    const first = (await store.events.list(run.id)).find((e) => e.type === 'claim_check')!.payload as { claims: { verdict: string }[] };
+    expect(first.claims.map((c) => c.verdict)).toEqual(['unsupported', 'unsupported']);  // demoted, never "contradicted" on invented text
+  });
+
+  it('goes back to planning when the checker asks for more retrieval', async () => {
+    const onlyHeading = JSON.stringify({ objective: 'Search', hypotheses: [{ id: 'H1', statement: 'HLT dependencies are documented' }],
+      steps: [{ id: 'S1', title: 'Search', tasks: [{ id: 'S1.1', tool: 'search_documents', args: { query: 'hlt_overall_state hlt_warning_count telemetry dictionary', limit: 1 }, purpose: 'HLT' }] }] });
+    const fetchTable = JSON.stringify({ objective: 'Read the subsystem reference row', steps: [{ id: 'S2', title: 'Table', tasks: [{ id: 'S2.1', tool: 'get_table', args: { contains: 'HLT', max_tables: 1 }, purpose: 'HLT row' }] }] });
+    const investigate: Reply = (m) => JSON.stringify({ claims: [...m[1].content.matchAll(/^(C\d+): /gm)].map((x) => ({ id: x[1], verdict: 'unsupported', explanation: 'a heading is not a dependency' })), next: 'investigate', guidance: 'fetch the SEC-03 subsystem reference table row for HLT' });
+    const model = new ScriptedModel({ title: ['{"title":"HLT purpose and dependencies"}'], planner: [onlyHeading, (m) => { expect(m[1].content).toContain('fetch the SEC-03 subsystem reference table row'); return fetchTable; }],
+      verifier: [verified], reporter: [wrongDraft, rightDraft], checker: [investigate, strictChecker] });
+    const run = await runner(model).start(chat, user, mission, question);
+    const done = await settle(run.id);
+    expect(done.status, done.error).toBe('complete');
+    const nodes = (await store.events.list(run.id)).filter((e) => e.type === 'node_entered').map((e) => (e.payload as { node: string }).node);
+    expect(nodes).toEqual(['intake', 'plan', 'execute', 'verify', 'report', 'check', 'plan', 'execute', 'verify', 'report', 'check']);
+    expect((done.view as { plans: unknown[] }).plans).toHaveLength(2);
+  });
+
+  it('does not let the verifier report past pending tasks while a hypothesis is undecided', async () => {
+    const twoSteps = JSON.stringify({ objective: 'Find HLT dependencies', hypotheses: [{ id: 'H1', statement: 'HLT dependencies are documented' }],
+      steps: [{ id: 'S1', title: 'Search', tasks: [{ id: 'S1.1', tool: 'search_documents', args: { query: 'hlt_overall_state hlt_warning_count telemetry dictionary', limit: 1 }, purpose: 'HLT' }] },
+        { id: 'S2', title: 'Table', depends_on: ['S1'], tasks: [{ id: 'S2.1', tool: 'get_table', args: { contains: 'HLT', max_tables: 1 }, purpose: 'HLT row' }] }] });
+    const tooEarly = JSON.stringify({ verdicts: [{ hypothesis: 'H1', status: 'insufficient', confidence: 'low', note: 'only a heading so far' }], next: 'report', reason: 'good enough' });
+    const model = new ScriptedModel({ title: ['{"title":"HLT purpose and dependencies"}'], planner: [twoSteps], verifier: [tooEarly, verified], reporter: [(m) => rightDraft([m[0], { role: 'user', content: `${m[1].content}\nYour previous draft failed the claim check` }])] });
+    const run = await runner(model).start(chat, user, mission, question);
+    expect((await settle(run.id)).status).toBe('complete');
+    const decisions = (await store.events.list(run.id)).filter((e) => e.type === 'decision').map((e) => e.payload as { route: string; reason: string });
+    expect(decisions[0]).toMatchObject({ route: 'execute', reason: expect.stringContaining('guard: 1 planned task(s) still pending while H1 is undecided') });
+    const results = (await store.events.list(run.id)).filter((e) => e.type === 'tool_result').map((e) => (e.payload as { tool: string }).tool);
+    expect(results).toEqual(['search_documents', 'get_table']);
   });
 });

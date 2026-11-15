@@ -37,6 +37,21 @@ export default function AnswerCard({ report, run, onEvidence, onReplay }: { repo
           ))}
         </div>
       )}
+      {!!report.claims?.length && (
+        <details className={`answer-more claims-box${report.claims.every((c) => c.verdict === 'supported') ? ' all-ok' : ' some-bad'}`}>
+          <summary>{report.claims.every((c) => c.verdict === 'supported')
+            ? `All ${report.claims.length} claims checked against the evidence`
+            : `${report.claims.filter((c) => c.verdict === 'supported').length} of ${report.claims.length} claims verified against the evidence`}
+            {report.checks && report.checks.rounds > 1 ? ` · corrected in ${report.checks.rounds - 1} round${report.checks.rounds > 2 ? 's' : ''}` : ''}</summary>
+          <ul className="claims">{report.claims.map((c) => (
+            <li key={c.id} className={`claim v-${c.verdict}`}>
+              <span className="claim-mark">{c.verdict === 'supported' ? '✓' : c.verdict === 'unchecked' ? '•' : '✗'}</span>
+              <div><div>{c.text} {c.evidence.map((id) => <span key={id} className="ev">{id}</span>)}</div>
+                {c.quote && <div className="claim-quote">“{c.quote}”</div>}
+                {c.verdict !== 'supported' && <div className="claim-why">{c.verdict}: {c.explanation}{c.contradicting.map((x) => ` ${x.evidence} says “${x.quote}”.`).join('')}</div>}</div>
+            </li>))}</ul>
+        </details>
+      )}
       {!!report.rejected_alternatives.length && (
         <details className="answer-more"><summary>Rejected alternatives ({report.rejected_alternatives.length})</summary>
           <ul>{report.rejected_alternatives.map((r, i) => <li key={i}><b>{r.hypothesis}</b> — {r.reason}</li>)}</ul></details>

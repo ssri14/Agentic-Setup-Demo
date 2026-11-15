@@ -94,14 +94,15 @@ A mission with no completely ingested documents can still be opened, but the age
 
 ## Models
 
-The agent uses four model **roles**:
+The agent uses five model **roles**:
 
 | Role | Job |
 |---|---|
 | **Planner** | Writes and revises the investigation plan: objective, hypotheses, steps and tool calls |
 | **Verifier** | Tests the hypotheses after each step and decides what happens next. Also makes recovery decisions when something fails |
 | **Analyst** | Writes the Python that `run_analysis` executes in the sandbox |
-| **Reporter** | Writes the final answer from verified findings, with evidence citations. Also titles new chats |
+| **Reporter** | Drafts the answer from verified findings, listing each factual claim with the evidence and the exact words that state it. Also titles new chats |
+| **Checker** | Checks every claim of a draft against the evidence before it is published. Settings saved before version 1.0.2 use the verifier's model for it; an independent model is a good choice |
 
 For each role, choose a **Provider** and a **Model**, then **Save**. New questions use the new settings; questions already running keep theirs. Providers appear only when their keys are set in `.env` ([Guide 1](01-infrastructure.md#configuration-reference)):
 

@@ -2,7 +2,7 @@
 import type { RunEvent } from './api';
 import { applyEvent, initialLive, type LiveState } from './liveRun';
 
-export const GRAPH_NODES = ['start', 'intake', 'plan', 'execute', 'verify', 'recover', 'clarify', 'report', 'end'] as const;
+export const GRAPH_NODES = ['start', 'intake', 'plan', 'execute', 'verify', 'recover', 'clarify', 'report', 'check', 'end'] as const;
 /** The five routes of the recovery lane; the verifier's own decisions light the matching ones (replan → revise, report → finish). */
 export type LaneAction = 'retry' | 'skip' | 'revise' | 'clarify' | 'finish';
 export type GraphNode = (typeof GRAPH_NODES)[number];
@@ -17,9 +17,9 @@ export interface ReplayState extends LiveState {
   usedHistory: boolean;
   clarifications: { question: string; answer?: string }[];
   verdicts: Record<string, { status: string; confidence: string; rule: string | null; note: string }>;
-  decision: { by: 'verify' | 'recover'; action: LaneAction | null; route: string; requested: string; reason: string; seq: number; fallback: boolean } | null;
+  decision: { by: 'verify' | 'recover' | 'check'; action: LaneAction | null; route: string; requested: string; reason: string; seq: number; fallback: boolean } | null;
   decisions: Record<string, number>;
-  deciding: 'verify' | 'recover' | null;
+  deciding: 'verify' | 'recover' | 'check' | null;
   failure: { node: string; tasks: string[]; error: string } | null;
   lastModelCall: RunEvent | null;
 }
@@ -33,6 +33,7 @@ export function category(type: string, payload: Record<string, unknown> = {}): C
   if (type === 'decision' || type === 'budget_warning') return 'decision';
   if (type === 'plan_created' || type === 'plan_revised') return 'plan';
   if (type.startsWith('clarification')) return 'clarify';
+  if (type === 'claim_check') return (payload.claims as { verdict: string }[] | undefined)?.some((c) => c.verdict === 'contradicted' || c.verdict === 'unsupported') ? 'fail' : 'verify';
   if (type === 'run_started' || type === 'run_finished') return 'run';
   return 'other';
 }
@@ -61,12 +62,12 @@ export function foldTo(events: RunEvent[], uptoSeq: number): ReplayState {
     if (e.type === 'clarification_asked') s = { ...s, clarifications: [...s.clarifications, { question: String(p.question) }] };
     if (e.type === 'clarification_answered') s = { ...s, clarifications: s.clarifications.map((c, i, a) => (i === a.length - 1 ? { ...c, answer: String(p.answer) } : c)) };
     if (e.type === 'decision') {
-      const route = String(p.route), by = p.by === 'recover' ? 'recover' as const : 'verify' as const;
-      const action = (by === 'recover' ? String(p.action) : ({ plan: 'revise', clarify: 'clarify', report: 'finish' } as Record<string, string>)[route] ?? null) as LaneAction | null;
+      const route = String(p.route), by = p.by === 'recover' ? 'recover' as const : p.by === 'check' ? 'check' as const : 'verify' as const;
+      const action = (by === 'recover' ? String(p.action) : by === 'check' ? (p.action === 'revise' ? 'revise' : null) : ({ plan: 'revise', clarify: 'clarify', report: 'finish' } as Record<string, string>)[route] ?? null) as LaneAction | null;
       s = { ...s, decision: { by, action, route, requested: String(p.requested ?? route), reason: String(p.reason ?? ''), seq: e.seq, fallback: Boolean(p.fallback) },
         decisions: action ? { ...s.decisions, [action]: (s.decisions[action] ?? 0) + 1 } : s.decisions };
     }
-    if (e.type === 'node_entered') s = { ...s, deciding: p.node === 'verify' || p.node === 'recover' ? (p.node as 'verify' | 'recover') : null };
+    if (e.type === 'node_entered') s = { ...s, deciding: p.node === 'verify' || p.node === 'recover' || p.node === 'check' ? (p.node as 'verify' | 'recover' | 'check') : null };
     if (e.type === 'node_entered' && p.node === 'recover') s = { ...s, failure: ((s.snapshot as { failure?: ReplayState['failure'] } | null)?.failure) ?? s.failure };
     if (e.type === 'node_failed') s = { ...s, failure: { node: String(p.node), tasks: [], error: String(p.error) } };
     if (e.type === 'decision' || e.type === 'run_finished') s = { ...s, deciding: null };

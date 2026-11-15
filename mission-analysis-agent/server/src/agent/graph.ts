@@ -6,6 +6,11 @@
  *              └──── clarify ←─────────┼→ clarify   (ask the user; interrupts the run)
  *                                      └→ report → END
  *
+ *   REPORT only drafts the answer: every factual claim with the evidence it rests on and the exact words quoted.
+ *   CHECK verifies each quote against the evidence text, then asks the checker model whether any evidence
+ *   contradicts a claim. Problems go back to REPORT (rewrite from the evidence in hand) or to PLAN (retrieve more),
+ *   at most twice; the final confidence is capped by what the check could verify.
+ *
  *   Any failure — a tool task, or the planner or verifier model — goes to RECOVER instead, whose model picks:
  *   retry (with a per-task budget, optionally with corrected arguments), continue without the failed task,
  *   revise the plan, ask the user, or finish with a partial answer. If the recovery model itself fails,
@@ -21,8 +26,9 @@ import type { Sources } from '../tools/sources.js';
 import { trim } from '../tools/util.js';
 import type { EventSink } from './events.js';
 import { completeJson, type ChatMessage, type ChatModel, type ModelRole } from './llm.js';
-import { analystMessages, missionBlock, plannerMessages, recoveryMessages, reporterMessages, toolCatalog, verifierMessages, type MissionContext } from './prompts.js';
-import { AnalystOutput, PlanOutput, ReportOutput, VerifyOutput, recoverSchema, type ReportOutput as ReportValue } from './schemas.js';
+import { MAX_CONTENT, labelPipeTables, quoteFound, relatedLines, tableContent } from './evidence.js';
+import { analystMessages, checkerMessages, missionBlock, plannerMessages, recoveryMessages, reporterMessages, toolCatalog, verifierMessages, type MissionContext } from './prompts.js';
+import { AnalystOutput, CheckOutput, PlanOutput, ReportOutput, VerifyOutput, recoverSchema, type Claim, type ReportOutput as ReportValue } from './schemas.js';
 
 export interface Budgets { maxToolCalls: number; maxRevisions: number; maxLlmCalls: number; maxSeconds: number; maxClarifications: number; parallelTasks: number; maxRetries: number; maxRecoveries: number }
 export const DEFAULT_BUDGETS: Budgets = { maxToolCalls: 48, maxRevisions: 5, maxLlmCalls: 100, maxSeconds: 900, maxClarifications: 1, parallelTasks: 3, maxRetries: 2, maxRecoveries: 10 };
@@ -39,14 +45,17 @@ export interface TaskState { id: string; step: string; tool: string; args: Recor
 export interface StepState { id: string; title: string; depends_on: string[]; tasks: string[]; version: number }
 export interface PlanVersion { version: number; objective: string; rationale: string; reason?: string; steps: string[] }
 export interface HypothesisState { id: string; statement: string; confirm_if: string; refute_if: string; status: string; confidence: string; rule?: string | null; note?: string; evidence_for: string[]; evidence_against: string[] }
-export interface EvidenceItem extends Evidence { id: string; task: string; snippet: string; artifact?: string }
+/** snippet: a short excerpt for the UI. content: the full text the models read and quotes are checked against. */
+export interface EvidenceItem extends Evidence { id: string; task: string; snippet: string; content?: string; artifact?: string }
+export type ClaimVerdict = 'supported' | 'contradicted' | 'unsupported' | 'unchecked';
+export interface CheckedClaim extends Claim { verdict: ClaimVerdict; quote_found: boolean; explanation: string; contradicting: { evidence: string; quote: string }[] }
 export interface Counters { toolCalls: number; llmCalls: number; revisions: number; clarifications: number; recoveries: number }
 /** What failed and must be recovered from: tool tasks in execute, or the planner or verifier model. */
 export interface Failure { node: 'execute' | 'plan' | 'verify'; tasks: string[]; error: string }
 /** Simulated failures a superuser switches on for demonstrations (Admin → Models → Fault injection). */
 export interface Faults { tool: string | null; toolFailures: number; plannerFailures: number }
 export interface Clarification { question: string; options: string[]; answer?: string }
-export type Route = 'execute' | 'verify' | 'plan' | 'clarify' | 'report' | 'recover';
+export type Route = 'execute' | 'verify' | 'plan' | 'clarify' | 'report' | 'recover' | 'check' | 'done';
 
 const last = <T>() => Annotation<T>({ reducer: (_a: T, b: T) => b, default: () => undefined as unknown as T });
 
@@ -67,6 +76,9 @@ export const AgentState = Annotation.Root({
   limits: last<string[]>(),
   failure: last<Failure | null>(),
   retries: last<Record<string, number>>(),
+  draft: last<ReportValue | null>(),
+  checkRounds: last<number>(),
+  checkFeedback: last<string | null>(),
 });
 export type State = typeof AgentState.State;
 
@@ -154,7 +166,44 @@ function observationsText(s: State, maxChars = 16000) {
   return parts.reverse().join('\n\n');
 }
 
-const evidenceText = (items: EvidenceItem[]) => items.map((e) => `${e.id} [${e.kind}] ${e.label} (from ${e.task}): ${trim(e.snippet, 220)}`).join('\n');
+/** One line per item: enough to choose what to look at (recovery decisions). */
+const evidenceIndex = (items: EvidenceItem[]) => items.map((e) => `${e.id} [${e.kind}] ${e.label} (from ${e.task}): ${trim(e.snippet, 220)}`).join('\n');
+
+/**
+ * The evidence the verifier, reporter and checker reason over: each item's full content (tables as labelled rows),
+ * within a character budget. Items named in `first` are kept whole first, then the newest; the rest are shortened.
+ */
+export function evidenceText(items: EvidenceItem[], maxChars = 24000, first: string[] = []): string {
+  const num = (id: string) => Number(id.slice(1));
+  const order = [...items].sort((a, b) => Number(first.includes(b.id)) - Number(first.includes(a.id)) || num(b.id) - num(a.id));
+  const blocks = new Map<string, string>();
+  let used = 0;
+  for (const e of order) {
+    const head = `${e.id} [${e.kind}] ${e.label} (from ${e.task})`;
+    const body = e.content ?? e.snippet;
+    let text = `${head}\n${body.split('\n').map((l) => `  ${l}`).join('\n')}`;
+    if (used + text.length > maxChars) text = `${head}: ${trim(body.replace(/\s+/g, ' '), 200)} (shortened)`;
+    used += text.length;
+    blocks.set(e.id, text);
+  }
+  return items.map((e) => blocks.get(e.id)).join('\n\n');
+}
+
+/** The full text of one evidence item, for the models and for quote checks. */
+function contentFor(e: Evidence, result: ToolResult): string {
+  const d = result.data as Record<string, unknown>;
+  try {
+    switch (e.kind) {
+      case 'passage': return labelPipeTables(String((d.passages as { chunk_id: string; text: string }[]).find((p) => p.chunk_id === e.ref)?.text ?? '')).slice(0, MAX_CONTENT);
+      case 'table': {
+        const t = (d.tables as { asset_id: string; title: string | null; section: string | null; page: number; source: string; columns: string[]; rows: string[][]; rows_total: number }[]).find((x) => String(x.asset_id) === e.ref);
+        return t ? tableContent(t).slice(0, MAX_CONTENT) : '';
+      }
+      case 'section': return d.content ? labelPipeTables((d.content as { text: string }[]).map((c) => c.text).join('\n')).slice(0, MAX_CONTENT) : result.summary;
+      default: return snippetFor(e, result);
+    }
+  } catch { return snippetFor(e, result); }
+}
 
 function snippetFor(e: Evidence, result: ToolResult): string {
   const d = result.data as Record<string, unknown>;
@@ -209,7 +258,7 @@ function partialReport(s: State): ReportValue {
   return {
     conclusion: `A full answer could not be written. What the investigation established before it stopped:\n\n${lines.length ? lines.join('\n') : '- No hypothesis could be tested.'}\n\nCompleted tasks: ${done.map((t) => `${t.id} (${t.summary ?? t.tool})`).join('; ') || 'none'}.`,
     confidence: 'low', confidence_reason: 'Partial answer built without the reporter model',
-    evidence: [...new Set(tested.flatMap((h) => h.evidence_for))].slice(0, 20), rejected_alternatives: [], uncertainties: [...s.limits],
+    evidence: [...new Set(tested.flatMap((h) => h.evidence_for))].slice(0, 20), rejected_alternatives: [], uncertainties: [...s.limits], claims: [],
   };
 }
 
@@ -360,7 +409,7 @@ export function buildAgent(ctx: AgentContext) {
     for (const e of r.evidence) {
       const existing = evidencePool.find((x) => x.kind === e.kind && x.ref === e.ref);
       if (existing) { items.push(existing); continue; }
-      const item: EvidenceItem = { ...e, id: `E${evidencePool.length + 1}`, task: task.id, snippet: trim(snippetFor(e, r), 900),
+      const item: EvidenceItem = { ...e, id: `E${evidencePool.length + 1}`, task: task.id, snippet: trim(snippetFor(e, r), 900), content: contentFor(e, r),
         artifact: r.artifacts.find((a) => a.kind === 'png')?.id ?? r.artifacts.find((a) => a.kind === 'csv')?.id };
       evidencePool.push(item); items.push(item);
     }
@@ -423,7 +472,7 @@ export function buildAgent(ctx: AgentContext) {
     try {
       ({ value } = await callModel(ctx, 'verify', 'verifier', VerifyOutput, verifierMessages({
         mission: s.missionText, question: s.question, hypotheses: hypothesesText(s.hypotheses), plan: planText(s),
-        observations: observationsText(s), evidence: evidenceText(s.evidence),
+        observations: observationsText(s, 12000), evidence: evidenceText(s.evidence, 24000),
         budget: `${counters.toolCalls}/${ctx.budgets.maxToolCalls} tool calls, ${counters.revisions}/${ctx.budgets.maxRevisions} plan revisions, ${elapsed(ctx)}/${ctx.budgets.maxSeconds} s`,
         clarificationAvailable: counters.clarifications < ctx.budgets.maxClarifications,
       }), counters, 3000));
@@ -451,6 +500,12 @@ export function buildAgent(ctx: AgentContext) {
     else if (pending) route = 'execute';
     else route = 'report';
     if (value.next === 'replan' && route !== 'plan') reason = `${reason} (no plan revisions left)`;
+    // Planned tasks are not skipped while the question is still open: reporting early needs every hypothesis decided.
+    const undecided = hypotheses.filter((h) => ['untested', 'insufficient', 'conflicting'].includes(h.status));
+    if (route === 'report' && value.next === 'report' && pending && undecided.length) {
+      route = 'execute';
+      reason = `${reason} (guard: ${pendingTasks(s).length} planned task(s) still pending while ${undecided.map((h) => h.id).join(', ')} ${undecided.length > 1 ? 'are' : 'is'} undecided; continuing the plan)`;
+    }
     await ctx.sink.emit('verify', 'decision', `${route === 'execute' ? 'continue' : route}: ${trim(reason, 160)}`, { by: 'verify', requested: value.next, route, reason });
     const next: Partial<State> = { counters, hypotheses, route, reason, clarification: route === 'clarify' ? { question: value.clarification!.question, options: value.clarification!.options } : s.clarification };
     await leave('verify', { ...s, ...next } as State, counters);
@@ -500,7 +555,7 @@ export function buildAgent(ctx: AgentContext) {
         failure: f.node === 'execute'
           ? f.tasks.map((id) => { const t = tasks[id]; return `${id} ${t.tool} ${t.tool === 'run_analysis' ? `goal="${t.args.goal}"` : JSON.stringify(t.args)} — ${t.purpose}\n  error: ${t.error}\n  retries left: ${left(id)}`; }).join('\n')
           : `The ${f.node === 'plan' ? 'planner' : 'verifier'} model call failed: ${f.error}\n  retries left: ${left(f.node)}`,
-        failedNode: f.node, plan: planText(s), observations: observationsText(s, 8000), evidence: evidenceText(s.evidence),
+        failedNode: f.node, plan: planText(s), observations: observationsText(s, 8000), evidence: evidenceIndex(s.evidence),
         budget: `${counters.toolCalls}/${ctx.budgets.maxToolCalls} tool calls, ${counters.revisions}/${ctx.budgets.maxRevisions} plan revisions, ${elapsed(ctx)}/${ctx.budgets.maxSeconds} s`,
         revisionAvailable: counters.revisions < ctx.budgets.maxRevisions,
         clarificationAvailable: counters.clarifications < ctx.budgets.maxClarifications,
@@ -541,36 +596,153 @@ export function buildAgent(ctx: AgentContext) {
     }
   }
 
+  const hypothesesForReport = (s: State) => s.hypotheses.map((h) => `${h.id} [${h.status}, ${h.confidence}${h.rule ? `, ${h.rule}` : ''}] ${h.statement}${h.note ? ` — ${h.note}` : ''}${h.evidence_for.length ? ` (for: ${h.evidence_for.join(', ')})` : ''}${h.evidence_against.length ? ` (against: ${h.evidence_against.join(', ')})` : ''}`).join('\n');
+  const citedByVerdicts = (s: State) => [...new Set(s.hypotheses.flatMap((h) => [...h.evidence_for, ...h.evidence_against]))];
+
+  /** Drafts the answer with its claims. The draft is published only after CHECK. */
   async function report(s: State): Promise<Partial<State>> {
     const counters = await enter('report', s);
     let value: ReportValue;
     try {
       ({ value } = await callModel(ctx, 'report', 'reporter', ReportOutput, reporterMessages({
-        mission: s.missionText, question: s.question,
-        hypotheses: s.hypotheses.map((h) => `${h.id} [${h.status}, ${h.confidence}${h.rule ? `, ${h.rule}` : ''}] ${h.statement}${h.note ? ` — ${h.note}` : ''}${h.evidence_for.length ? ` (for: ${h.evidence_for.join(', ')})` : ''}${h.evidence_against.length ? ` (against: ${h.evidence_against.join(', ')})` : ''}`).join('\n'),
-        observations: observationsText(s, 14000), evidence: evidenceText(s.evidence), limits: s.limits.join('; '),
-      }), counters, 4000));
+        mission: s.missionText, question: s.question, hypotheses: hypothesesForReport(s),
+        observations: observationsText(s, 10000), evidence: evidenceText(s.evidence, 26000, citedByVerdicts(s)), limits: s.limits.join('; '),
+        feedback: s.checkFeedback && s.draft ? { previous: s.draft.conclusion, problems: s.checkFeedback } : undefined,
+      }), counters, 5000));
     } catch (error) {
       if (error instanceof StoppedError || ctx.signal.aborted) throw new StoppedError();
       // Last line of recovery: a partial answer assembled without a model, from what the run established.
       const message = (error as Error).message;
       await ctx.sink.emit('report', 'node_failed', `Reporter failed: ${trim(message, 150)}; building a partial answer without it`, { node: 'report', error: message });
-      s = { ...s, limits: [...s.limits, `the reporter model failed (${trim(message, 160)}); this partial answer was assembled from the verified state`] };
-      value = partialReport(s);
+      const limits = [...s.limits, `the reporter model failed (${trim(message, 160)}); this partial answer was assembled from the verified state`];
+      return finalize({ ...s, limits } as State, counters, partialReport({ ...s, limits } as State), [], { checker: 'skipped' });
     }
-    const known = new Map(s.evidence.map((e) => [e.id, e]));
-    const cited = [...new Set([...value.evidence, ...(value.conclusion.match(/E\d+/g) ?? [])])].filter((id) => known.has(id));
-    const report = { ...value, evidence: cited.map((id) => known.get(id)!), limits: s.limits };
-    const view = buildView(s);
-    const totals = { tool_calls: counters.toolCalls, llm_calls: counters.llmCalls, revisions: counters.revisions, recoveries: counters.recoveries ?? 0, plan_versions: s.plans.length,
-      evidence: s.evidence.length, elapsed_s: elapsed(ctx) };
-    await ctx.store.messages.insert({ chatId: ctx.chatId, role: 'assistant', text: value.conclusion, runId: ctx.runId, report, createdAt: new Date().toISOString() });
-    await ctx.sink.emit('report', 'run_finished', `Answered with ${value.confidence} confidence`, { status: 'complete', report, totals, view });
-    await ctx.onFinished?.('complete', view, totals);
-    return { counters, route: 'report' };
+    await ctx.sink.emit('report', 'answer_drafted', `Draft answer with ${value.claims.length} claim(s), ${value.confidence} confidence`,
+      { claims: value.claims, confidence: value.confidence, conclusion: value.conclusion, round: (s.checkRounds ?? 0) + 1 });
+    const next: Partial<State> = { counters, draft: value, route: 'check' };
+    await leave('report', { ...s, ...next } as State, counters);
+    return next;
   }
 
-  const routeTo = (s: State) => (s.route === 'execute' ? 'execute' : s.route === 'verify' ? 'verify' : s.route === 'clarify' ? 'clarify' : s.route === 'report' ? 'report' : s.route === 'recover' ? 'recover' : 'plan');
+  /** Checks every claim of the draft against the evidence text; sends problems back, or publishes the answer. */
+  async function checkClaims(s: State): Promise<Partial<State>> {
+    const counters = await enter('check', s);
+    const draft = s.draft!;
+    const pool = new Map(s.evidence.map((e) => [e.id, e]));
+    const contentOf = (id: string) => { const e = pool.get(id); return e ? (e.content ?? e.snippet) : ''; };
+    const round = (s.checkRounds ?? 0) + 1;
+
+    // 1. Deterministic: the cited evidence exists and contains the quoted words.
+    const det = draft.claims.map((c) => {
+      const cited = c.evidence.filter((id) => pool.has(id));
+      return { id: c.id, cited, quoteIn: cited.find((id) => c.quote && quoteFound(c.quote, contentOf(id))) ?? null };
+    });
+
+    // 2. The checker model: does the evidence, read in full, state each claim, or contradict it?
+    let model: CheckOutput | null = null, checkerError: string | null = null;
+    const limit = outOfBudget(counters);
+    if (draft.claims.length && !limit) {
+      const items = s.evidence.map((e) => ({ id: e.id, content: e.content ?? e.snippet }));
+      const claimsText = draft.claims.map((c, i) => {
+        const d = det[i];
+        const status = !d.cited.length ? 'cites no evidence from this run' : d.quoteIn ? `quote found in ${d.quoteIn}` : `QUOTE NOT FOUND in ${d.cited.join(', ')}`;
+        const related = relatedLines(c.text, items);
+        return `${c.id}: ${c.text}\n  cites: ${c.evidence.join(', ') || 'none'} · quote: "${c.quote}" · ${status}` +
+          (related.length ? `\n  lines in the evidence that mention the same identifiers:\n${related.map((l) => `    ${l}`).join('\n')}` : '');
+      }).join('\n\n');
+      try {
+        ({ value: model } = await callModel(ctx, 'check', 'checker', CheckOutput, checkerMessages({
+          question: s.question, claims: claimsText, evidence: evidenceText(s.evidence, 26000, [...new Set(draft.claims.flatMap((c) => c.evidence))]),
+          revisionAvailable: counters.revisions < ctx.budgets.maxRevisions,
+        }), counters, 3000));
+      } catch (error) {
+        if (error instanceof StoppedError || ctx.signal.aborted) throw new StoppedError();
+        checkerError = (error as Error).message;
+      }
+    }
+
+    // 3. Combine. A contradiction counts only if its quoted words are really in the evidence it names.
+    const results: CheckedClaim[] = draft.claims.map((c, i) => {
+      const d = det[i];
+      const m = model?.claims.find((x) => x.id === c.id);
+      const contradicting = (m?.contradicting ?? []).filter((x) => pool.has(x.evidence) && quoteFound(x.quote, contentOf(x.evidence)));
+      let verdict: ClaimVerdict, explanation = m?.explanation ?? '';
+      if (m?.verdict === 'contradicted' && contradicting.length) verdict = 'contradicted';
+      else if (!d.cited.length) { verdict = 'unsupported'; explanation = `cites no evidence gathered in this run${explanation ? `; ${explanation}` : ''}`; }
+      else if (!d.quoteIn) { verdict = 'unsupported'; explanation = `the quoted words are not in ${d.cited.join(', ')}${explanation ? `; ${explanation}` : ''}`; }
+      else if (!m) { verdict = 'unchecked'; explanation = explanation || 'quote verified; the claim checker was not available'; }
+      else if (m.verdict === 'contradicted') { verdict = 'unsupported'; explanation = `${explanation} (the contradicting quote could not be found in the evidence)`; }
+      else verdict = m.verdict;
+      return { ...c, verdict, quote_found: Boolean(d.quoteIn), explanation, contradicting };
+    });
+    const bad = results.filter((r) => r.verdict === 'contradicted' || r.verdict === 'unsupported');
+    const ok = results.filter((r) => r.verdict === 'supported').length;
+    const summary = !results.length ? 'No claims to check' : `${ok} of ${results.length} claims supported${bad.length ? `, ${bad.filter((r) => r.verdict === 'contradicted').length} contradicted, ${bad.filter((r) => r.verdict === 'unsupported').length} unsupported` : ''}`;
+    await ctx.sink.emit('check', 'claim_check', `Round ${round}: ${summary}`, { round, claims: results, next: model?.next ?? null, guidance: model?.guidance ?? '', checker_error: checkerError });
+
+    // 4. Send problems back while rounds and budgets allow.
+    if (bad.length && round < 3 && !limit) {
+      const problems = bad.map((r) => `${r.id} "${r.text}" — ${r.verdict}: ${r.explanation}${r.contradicting.length ? ` The evidence says: ${r.contradicting.map((x) => `${x.evidence} "${x.quote}"`).join('; ')}` : ''}`).join('\n') + (model?.guidance ? `\nChecker guidance: ${model.guidance}` : '');
+      const investigate = model?.next === 'investigate' && counters.revisions < ctx.budgets.maxRevisions;
+      const route: Route = investigate ? 'plan' : 'report';
+      const reason = `Claim check found ${bad.length} problem(s) in the draft answer:\n${problems}`;
+      await ctx.sink.emit('check', 'decision', `${investigate ? 'investigate further' : 'rewrite the answer'}: ${trim(problems, 150)}`,
+        { by: 'check', action: investigate ? 'revise' : 'rewrite', requested: model?.next ?? 'rewrite', route, reason });
+      const next: Partial<State> = { counters, route, reason, checkRounds: round, checkFeedback: problems };
+      await leave('check', { ...s, ...next } as State, counters);
+      return next;
+    }
+    return finalize(s, counters, draft, results, { checker: model ? 'ok' : checkerError ? 'failed' : 'skipped', rounds: round, limit });
+  }
+
+  /** Publishes the answer with confidence capped by what the claim check established. */
+  async function finalize(s: State, counters: Counters, draft: ReportValue, results: CheckedClaim[],
+    info: { checker: 'ok' | 'failed' | 'skipped'; rounds?: number; limit?: string | null }): Promise<Partial<State>> {
+    const rank = { low: 0, medium: 1, high: 2 } as const;
+    let cap: keyof typeof rank = 'high';
+    const why: string[] = [];
+    const lower = (to: keyof typeof rank, reason: string) => { if (rank[to] < rank[cap]) cap = to; why.push(reason); };
+    const bad = results.filter((r) => r.verdict === 'contradicted' || r.verdict === 'unsupported');
+    if (!results.length) lower('low', 'no claim in the answer could be tied to quoted evidence');
+    if (bad.length) lower('low', `${bad.length} claim(s) could not be verified against the evidence`);
+    if (results.some((r) => r.verdict === 'unchecked')) lower('medium', 'claims were not cross-checked because the claim checker was unavailable');
+    const limits = [...s.limits, ...(info.limit ? [info.limit] : [])];
+    if (limits.length) lower('medium', 'the investigation hit a limit or a failure');
+    if (s.hypotheses.some((h) => h.status === 'conflicting')) lower('medium', 'a hypothesis still has conflicting evidence');
+    const confidence = rank[draft.confidence] <= rank[cap] ? draft.confidence : cap;
+    const lowered = confidence !== draft.confidence;
+
+    // Planned tasks that never ran are marked, not silently dropped.
+    const tasks = { ...s.tasks };
+    for (const t of pendingTasks(s)) {
+      tasks[t.id] = { ...t, status: 'skipped', summary: 'not run: the answer was reached without it' };
+      await ctx.sink.emit('report', 'task_status', `${t.id} skipped (answered without it)`, { task: t.id, step: t.step, status: 'skipped', summary: tasks[t.id].summary });
+    }
+    const finalState = { ...s, tasks } as State;
+
+    const known = new Map(s.evidence.map((e) => [e.id, e]));
+    const conclusion = bad.length
+      ? `${draft.conclusion}\n\n> **Not verified against the evidence:** ${bad.map((r) => `${r.text} (${r.verdict === 'contradicted' ? `contradicted by ${r.contradicting.map((x) => x.evidence).join(', ')}` : 'no supporting quote'})`).join('; ')}`
+      : draft.conclusion;
+    const cited = [...new Set([...draft.evidence, ...results.flatMap((r) => [...r.evidence, ...r.contradicting.map((x) => x.evidence)]), ...(conclusion.match(/E\d+/g) ?? [])])].filter((id) => known.has(id));
+    const report = {
+      ...draft, conclusion, confidence,
+      confidence_reason: lowered ? `${draft.confidence_reason} — lowered from ${draft.confidence}: ${why.join('; ')}` : draft.confidence_reason,
+      uncertainties: [...draft.uncertainties, ...bad.map((r) => `Unverified claim: ${r.text}`)],
+      evidence: cited.map((id) => { const { content: _content, ...rest } = known.get(id)!; return rest; }),
+      claims: results, checks: { rounds: info.rounds ?? 0, checker: info.checker, supported: results.filter((r) => r.verdict === 'supported').length, total: results.length },
+      limits,
+    };
+    const view = buildView(finalState);
+    const totals = { tool_calls: counters.toolCalls, llm_calls: counters.llmCalls, revisions: counters.revisions, recoveries: counters.recoveries ?? 0, plan_versions: s.plans.length,
+      evidence: s.evidence.length, check_rounds: info.rounds ?? 0, elapsed_s: elapsed(ctx) };
+    await ctx.store.messages.insert({ chatId: ctx.chatId, role: 'assistant', text: conclusion, runId: ctx.runId, report, createdAt: new Date().toISOString() });
+    await ctx.sink.emit('report', 'run_finished', `Answered with ${confidence} confidence${lowered ? ` (lowered from ${draft.confidence})` : ''}`, { status: 'complete', report, totals, view });
+    await ctx.onFinished?.('complete', view, totals);
+    return { counters, tasks, route: 'done' };
+  }
+
+  const routeTo = (s: State) => (s.route === 'done' ? END : s.route === 'execute' ? 'execute' : s.route === 'verify' ? 'verify' : s.route === 'clarify' ? 'clarify' : s.route === 'report' ? 'report' : s.route === 'recover' ? 'recover' : s.route === 'check' ? 'check' : 'plan');
 
   return new StateGraph(AgentState)
     .addNode('intake', intake)
@@ -580,6 +752,7 @@ export function buildAgent(ctx: AgentContext) {
     .addNode('clarify', clarify)
     .addNode('recover', recover)
     .addNode('report', report)
+    .addNode('check', checkClaims)
     .addEdge(START, 'intake')
     .addEdge('intake', 'plan')
     .addConditionalEdges('plan', routeTo, ['execute', 'clarify', 'report', 'recover'])
@@ -587,7 +760,8 @@ export function buildAgent(ctx: AgentContext) {
     .addConditionalEdges('verify', routeTo, ['execute', 'plan', 'clarify', 'report', 'recover'])
     .addConditionalEdges('recover', routeTo, ['execute', 'verify', 'plan', 'clarify', 'report'])
     .addEdge('clarify', 'plan')
-    .addEdge('report', END)
+    .addConditionalEdges('report', routeTo, ['check', END])
+    .addConditionalEdges('check', routeTo, ['report', 'plan', END])
     .compile({ checkpointer: new MemorySaver() });
 }
 

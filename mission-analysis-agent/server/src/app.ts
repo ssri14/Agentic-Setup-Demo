@@ -20,7 +20,9 @@ export async function currentModelSettings(store: Store, providers: ProviderConf
   const fallback = defaultSettings(providers);
   if (!saved || !fallback) return fallback;
   // Drop roles whose provider is no longer configured.
-  return Object.fromEntries(MODEL_ROLES.map((r) => [r, saved[r] && providers.some((p) => p.id === saved[r].provider) ? saved[r] : fallback[r]])) as ModelSettings;
+  // The checker defaults to the verifier's choice in settings saved before it existed.
+  const pick = (r: keyof ModelSettings) => saved[r] ?? (r === 'checker' ? saved.verifier : undefined);
+  return Object.fromEntries(MODEL_ROLES.map((r) => { const s = pick(r); return [r, s && providers.some((p) => p.id === s.provider) ? s : fallback[r]]; })) as ModelSettings;
 }
 import {
   LOCK_DURATION_MS, LOCK_THRESHOLD, LOCK_WINDOW_MS, SESSION_COOKIE, dummyPasswordHash, hashPassword,

@@ -5,8 +5,8 @@
 import type { z } from 'zod';
 
 export type ProviderId = 'lan' | 'openrouter' | 'groq';
-export type ModelRole = 'planner' | 'verifier' | 'analyst' | 'reporter';
-export const MODEL_ROLES: ModelRole[] = ['planner', 'verifier', 'analyst', 'reporter'];
+export type ModelRole = 'planner' | 'verifier' | 'analyst' | 'reporter' | 'checker';
+export const MODEL_ROLES: ModelRole[] = ['planner', 'verifier', 'analyst', 'reporter', 'checker'];
 
 export interface ProviderConfig { id: ProviderId; label: string; baseUrl: string; apiKey?: string; defaultModel: string; hosted: boolean }
 export interface RoleSetting { provider: ProviderId; model: string }
@@ -37,7 +37,7 @@ export class OpenAICompatibleModel implements ChatModel {
   async complete(role: ModelRole, messages: ChatMessage[], options: { json?: boolean; maxTokens?: number; signal?: AbortSignal } = {}): Promise<Completion> {
     const settings = await this.settings();
     if (!settings) throw new Error('No language model is configured. Set LLM_BASE_URL, OPENROUTER_API_KEY or GROQ_API_KEY.');
-    const choice = settings[role];
+    const choice = settings[role] ?? settings.verifier;     // settings saved before the checker role existed
     const provider = this.providers.find((p) => p.id === choice.provider);
     if (!provider) throw new Error(`Model provider ${choice.provider} for the ${role} is not configured`);
     const key = `${provider.id}:${choice.model}`;

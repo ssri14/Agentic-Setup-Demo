@@ -54,7 +54,7 @@ When anything fails, a **recovery** step chooses one of five routes:
 
 Retry and revision budgets bound every one of these routes.
 
-A **reporter** writes the answer with citations to evidence items, a confidence, the alternatives it rejected, and its open uncertainties. Every event is logged, so any answer can be replayed: the agent graph, the evolving plan graph with its recovery lane, and each model call and tool result.
+A **reporter** drafts the answer: each factual claim with the evidence it rests on and the exact words quoted from it. A **claim check** then verifies every quote against the evidence text, and asks a checker model whether any evidence contradicts a claim, for example a heading mistaken for a table row. Failed claims send the draft back to be rewritten, or back to planning to fetch more, and confidence is capped by what could be verified. The published answer carries citations, a confidence, the alternatives it rejected, and its open uncertainties. Every event is logged, so any answer can be replayed: the agent graph, the evolving plan graph with its recovery lane, and each model call and tool result.
 
 ## Quick start
 
@@ -97,7 +97,7 @@ Technical references: [`data-ingestion/README.md`](data-ingestion/README.md), [`
 | `ssri14/mission-analysis-agent` | `mission-analysis-agent/` |
 | `ssri14/mission-analysis-sandbox` | `mission-analysis-agent/sandbox/` |
 
-Tags: `1.0.1` (current), `1.0.0` and `latest`, for `linux/amd64` and `linux/arm64`. Compose uses `IMAGE_NAMESPACE` and `IMAGE_TAG` from `.env`. To publish, see [Guide 1 → Publishing images](docs/01-infrastructure.md#publishing-images).
+Tags: `1.0.2` (current), earlier versions, and `latest`, for `linux/amd64` and `linux/arm64`. Compose uses `IMAGE_NAMESPACE` and `IMAGE_TAG` from `.env`. To publish, see [Guide 1 → Publishing images](docs/01-infrastructure.md#publishing-images).
 
 ## Not in this repository
 

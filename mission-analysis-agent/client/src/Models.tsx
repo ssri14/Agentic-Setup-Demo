@@ -5,7 +5,8 @@ interface Provider { id: string; label: string; defaultModel: string; hosted: bo
 type Settings = Record<string, { provider: string; model: string }>;
 const ROLE_TEXT: Record<string, string> = {
   planner: 'Writes and revises the investigation plan', verifier: 'Tests hypotheses after each round, decides what happens next, and chooses how to recover from failures',
-  analyst: 'Writes the Python for run_analysis', reporter: 'Writes the final answer from verified findings',
+  analyst: 'Writes the Python for run_analysis', reporter: 'Writes the final answer from verified findings, quoting the evidence for each claim',
+  checker: 'Checks every claim of the answer against the evidence text before it is published (an independent model is a good choice)',
 };
 
 interface FaultSettings { enabled: boolean; tool: string | null; toolFailures: number; plannerFailures: number }

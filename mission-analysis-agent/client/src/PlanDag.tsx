@@ -24,8 +24,8 @@ const ROUTES: { id: LaneAction; title: string; tag: string }[] = [
 ];
 
 export interface DagRunState {
-  deciding: 'verify' | 'recover' | null;          // who is deciding right now
-  decision: { by: 'verify' | 'recover'; action: LaneAction | null; fallback: boolean } | null;   // the latest decision
+  deciding: 'verify' | 'recover' | 'check' | null;          // who is deciding right now
+  decision: { by: 'verify' | 'recover' | 'check'; action: LaneAction | null; fallback: boolean } | null;   // the latest decision
   counts: Partial<Record<LaneAction, number>>;
   response: 'pending' | 'executing' | 'succeeded' | 'failed';
 }
@@ -119,12 +119,12 @@ export function PlanDag({ plan, run }: { plan: PlanView; run: DagRunState }) {
           );
         })}
         <div className={`dag-card d-${respStatus}`} style={{ left: resp.x, top: resp.y, width: W, height: resp.h }}>
-          <div className="dag-title">Write the answer with cited evidence</div>
-          <div className="dag-state">RESPONSE  |  {LABEL[respStatus]}</div>
+          <div className="dag-title">Write the answer; check every claim</div>
+          <div className="dag-state">RESPONSE + CHECK  |  {LABEL[respStatus]}</div>
         </div>
 
         <div className={`lane-card hub l-${hubStatus}`} style={{ left: hub.x, top: hub.y, width: HUB_W, height: HUB_H }}>
-          <b>{recovering ? 'Recovery decision' : 'Review / recovery decision'}</b><span>{run.deciding === 'recover' ? 'RECOVERY' : run.deciding === 'verify' ? 'VERIFY' : recovering ? 'RECOVERY' : 'DECISION'}  |  {LABEL[hubStatus]}{run.decision?.fallback && !run.deciding ? '  ·  FALLBACK' : ''}</span>
+          <b>{recovering ? 'Recovery decision' : 'Review / recovery decision'}</b><span>{run.deciding === 'recover' ? 'RECOVERY' : run.deciding === 'check' ? 'CLAIM CHECK' : run.deciding === 'verify' ? 'VERIFY' : recovering ? 'RECOVERY' : 'DECISION'}  |  {LABEL[hubStatus]}{run.decision?.fallback && !run.deciding ? '  ·  FALLBACK' : ''}</span>
         </div>
         {acts.map((a) => (
           <div key={a.id} className={`lane-card l-${actStatus(a.id)}`} style={{ left: a.x, top: a.y, width: ACT_W, height: ACT_H }}>

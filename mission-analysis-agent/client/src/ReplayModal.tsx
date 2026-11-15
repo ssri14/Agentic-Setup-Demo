@@ -10,7 +10,7 @@ const NODE_POS: Record<GraphNode, { x: number; y: number; label: string; w?: num
   start: { x: 170, y: 22, label: 'Start' }, intake: { x: 170, y: 74, label: 'Intake' }, plan: { x: 170, y: 144, label: 'Plan' },
   execute: { x: 170, y: 224, label: 'Execute tools' }, verify: { x: 170, y: 304, label: 'Verify' }, clarify: { x: 46, y: 224, label: 'Ask user', w: 80 },
   recover: { x: 330, y: 264, label: 'Recover', w: 84 },
-  report: { x: 170, y: 384, label: 'Report' }, end: { x: 170, y: 446, label: 'End' },
+  report: { x: 170, y: 384, label: 'Report (draft)' }, check: { x: 170, y: 456, label: 'Check claims' }, end: { x: 170, y: 520, label: 'End' },
 };
 const EDGES: { id: string; d: string; lx: number; ly: number }[] = [
   { id: 'start->intake', d: 'M170 30V52', lx: 182, ly: 44 },
@@ -18,7 +18,11 @@ const EDGES: { id: string; d: string; lx: number; ly: number }[] = [
   { id: 'plan->execute', d: 'M170 164V202', lx: 182, ly: 186 },
   { id: 'execute->verify', d: 'M170 244V282', lx: 182, ly: 266 },
   { id: 'verify->report', d: 'M170 324V362', lx: 182, ly: 346 },
-  { id: 'report->end', d: 'M170 404V436', lx: 182, ly: 422 },
+  { id: 'report->check', d: 'M170 404V434', lx: 182, ly: 422 },
+  { id: 'check->end', d: 'M170 476V510', lx: 182, ly: 496 },
+  { id: 'check->report', d: 'M230 450C256 450 256 392 232 392', lx: 252, ly: 428 },
+  { id: 'check->plan', d: 'M230 462H392V140H232', lx: 382, ly: 300 },
+  { id: 'report->end', d: 'M110 392C78 420 82 500 160 516', lx: 80, ly: 470 },
   { id: 'execute->execute', d: 'M204 204C212 186 236 190 230 210', lx: 230, ly: 192 },
   { id: 'verify->execute', d: 'M230 296C246 296 248 236 232 236', lx: 238, ly: 262 },
   { id: 'verify->plan', d: 'M230 314C266 314 266 152 232 152', lx: 258, ly: 186 },
@@ -40,7 +44,7 @@ const EDGES: { id: string; d: string; lx: number; ly: number }[] = [
 
 function AgentGraph({ s }: { s: ReplayState }) {
   return (
-    <svg viewBox="0 0 380 462" className="agent-graph" role="img" aria-label={`Agent graph, current node ${s.current}`}>
+    <svg viewBox="0 0 400 536" className="agent-graph" role="img" aria-label={`Agent graph, current node ${s.current}`}>
       <defs>
         <marker id="g-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" className="g-arrowhead" /></marker>
         <marker id="g-arrow-hot" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" className="g-arrowhead hot" /></marker>
@@ -121,7 +125,8 @@ function Detail({ e, runId }: { e: RunEvent; runId: string }) {
       {p.note && <p className="muted">{p.note}</p>}
       <div className="kv2"><span>For</span><span>{p.evidence_for?.join(', ') || '–'}</span><span>Against</span><span>{p.evidence_against?.join(', ') || '–'}</span></div>
     </>);
-    case 'decision': return p.by === 'recover' ? (<>
+    case 'decision': if (p.by === 'check') return (<><div className="kv2"><span>Claim check</span><b>{p.action === 'revise' ? 'investigate further (back to Plan)' : 'rewrite the answer (back to Report)'}</b></div><p style={{ whiteSpace: 'pre-wrap' }}>{p.reason}</p></>);
+      return p.by === 'recover' ? (<>
       <div className="kv2"><span>Failure in</span><b>{p.failure?.node === 'execute' ? p.failure.tasks.join(', ') : p.failure?.node === 'plan' ? 'the planner' : 'the verifier'}</b>
         <span>Model asked</span><b>{p.requested}</b><span>Action taken</span><b>{p.action}{p.fallback ? ' (fallback: the recovery model failed)' : ''}</b><span>Next node</span><b>{p.route}</b></div>
       {p.note && <div className="task-note">Guard: {p.note}</div>}
@@ -129,6 +134,20 @@ function Detail({ e, runId }: { e: RunEvent; runId: string }) {
       {p.failure?.error && <><div className="row-label">Error</div><div className="task-note err">{p.failure.error}</div></>}
       {!!p.corrected?.length && <p className="muted small">Corrected arguments for {p.corrected.join(', ')}.</p>}
     </>) : (<><div className="kv2"><span>Verifier asked</span><b>{p.requested}</b><span>Route taken</span><b>{p.route === 'execute' ? 'continue' : p.route}</b></div><p>{p.reason}</p></>);
+    case 'answer_drafted': return (<>
+      <div className="kv2"><span>Round</span><b>{p.round}</b><span>Draft confidence</span><b>{p.confidence}</b></div>
+      <div className="row-label">Claims to check</div>
+      <ul className="tight">{(p.claims ?? []).map((c: { id: string; text: string; evidence: string[]; quote: string }) => <li key={c.id}><b>{c.id}</b> {c.text} <span className="muted">[{c.evidence.join(', ')}] “{c.quote}”</span></li>)}</ul>
+    </>);
+    case 'claim_check': return (<>
+      <div className="kv2"><span>Round</span><b>{p.round}</b><span>Checker</span><b>{p.checker_error ? `unavailable (${p.checker_error})` : p.next ?? '–'}</b></div>
+      <ul className="claims">{(p.claims ?? []).map((c: { id: string; text: string; verdict: string; quote: string; quote_found: boolean; explanation: string; contradicting: { evidence: string; quote: string }[]; evidence: string[] }) => (
+        <li key={c.id} className={`claim v-${c.verdict}`}><span className="claim-mark">{c.verdict === 'supported' ? '✓' : c.verdict === 'unchecked' ? '•' : '✗'}</span>
+          <div><div><b>{c.id}</b> {c.text} <span className="muted">[{c.evidence.join(', ')}]</span></div>
+            <div className="claim-quote">“{c.quote}” {c.quote_found ? '· quote found' : '· quote NOT found'}</div>
+            <div className={c.verdict === 'supported' ? 'muted small' : 'claim-why'}>{c.verdict}: {c.explanation}{c.contradicting.map((x) => ` ${x.evidence} says “${x.quote}”.`).join('')}</div></div></li>))}</ul>
+      {p.guidance && <p className="muted small">Guidance: {p.guidance}</p>}
+    </>);
     case 'node_failed': return (<><div className="kv2"><span>Node</span><b>{p.node}</b></div><div className="task-note err">{p.error}</div><p className="muted small">{p.node === 'report' ? 'A partial answer is built without the model.' : 'The failure goes to the recovery node.'}</p></>);
     case 'task_status': return (<><div className="kv2"><span>Task</span><b>{p.task}</b><span>Status</span><b>{p.status}</b></div>{(p.summary || p.error) && <p className={p.error ? 'task-note err' : ''}>{p.error ?? p.summary}</p>}</>);
     case 'hypothesis_updated': return (<><div className="kv2"><span>Hypothesis</span><b>{p.id}</b><span>Status</span><b>{p.status}</b></div><p>{p.statement}</p></>);
@@ -226,7 +245,7 @@ export default function ReplayModal({ runId, onClose }: { runId: string | null; 
                         deciding: latestPlan === state.plans.at(-1) ? state.deciding : null,
                         decision: latestPlan === state.plans.at(-1) ? state.decision : { by: 'verify', action: 'revise', fallback: false },
                         counts: state.decisions as Partial<Record<LaneAction, number>>,
-                        response: state.current === 'end' ? (state.status === 'complete' ? 'succeeded' : 'failed') : state.current === 'report' ? 'executing' : 'pending' }} />
+                        response: state.current === 'end' ? (state.status === 'complete' ? 'succeeded' : 'failed') : state.current === 'report' || state.current === 'check' ? 'executing' : 'pending' }} />
                     : <Plan plan={latestPlan} />}</div>
                 </>) : <p className="muted">No plan yet.</p>}
               </section>
