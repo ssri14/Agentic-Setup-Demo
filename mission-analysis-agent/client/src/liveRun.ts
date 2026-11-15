@@ -35,7 +35,7 @@ export function applyEvent(state: LiveState, e: RunEvent): LiveState {
     case 'verification': return { ...s, stage: `Verified ${p.hypothesis}: ${p.status}` };
     case 'claim_check': {
       const claims = (p.claims as { verdict: string }[]) ?? [];
-      const bad = claims.filter((c) => c.verdict === 'contradicted' || c.verdict === 'unsupported').length;
+      const bad = claims.filter((c) => c.verdict !== 'supported' && c.verdict !== 'unchecked').length;
       return bad ? { ...s, stage: e.summary, notes: [...s.notes, `✗ Claim check: ${e.summary.replace(/^Round \d+: /, '')}; correcting the answer`] } : { ...s, stage: e.summary };
     }
     case 'node_failed': return { ...s, stage: e.summary, notes: [...s.notes, `⚠ ${e.summary}`] };

@@ -76,11 +76,20 @@ The answer card contains:
 - **Conclusion**, with citations like **[E3]**. Every factual claim should rest on an evidence item.
 - **Confidence**, *high*, *medium* or *low*, with the reason.
 - **Evidence**: the cited items, such as document passages, sections, tables, figures, telemetry windows, run summaries and analyses. Click one to open it in the side drawer. There you see the passage with its page and section, the telemetry window with a small chart, or the analysis output and chart. Items backed by data have a **Download the data** link.
-- **Claims checked**: every factual statement of the answer, with the evidence it rests on and the exact words quoted from that evidence. Before an answer is shown, each claim is checked twice:
-  - **quote check**: the quoted words must really be in the cited evidence;
-  - **checker model**: no evidence may contradict the claim. For example, a page heading that lists subsystem names is not accepted as evidence of a dependency, when a table row says otherwise.
+- **Claims checked**: every factual statement of the answer, with the evidence it rests on: either the exact words quoted from it, or, for a table fact, the table cell (row, column, value). Before an answer is shown, each claim is checked twice:
+  - **in the text**: the quote, or the cell, must really be in the cited evidence. Tables are read row by row, so a quote may not stitch words from different rows or paragraphs, and a heading that lists names never counts as a relationship. If the claim is worded differently, the line of the evidence that states it is located instead;
+  - **by the checker model**: the evidence must establish the claim, and none may contradict it.
 
-  A failed claim sends the answer back to be rewritten from the evidence, or back to planning to fetch what is missing, up to two times. The summary line says whether all claims passed and how many correction rounds were needed. A claim that still fails is marked ✗, listed under **Not verified against the evidence** at the end of the conclusion, and the confidence is lowered.
+  Each claim gets one of these results:
+
+  | Mark | Result | Meaning | Effect on confidence |
+  |---|---|---|---|
+  | ✓ | supported | The evidence establishes the claim, and the supporting text was found | none |
+  | ✗ | contradicted | Some evidence states something incompatible (its words are shown) | lowered to low |
+  | ✗ | not established | Nothing in the cited evidence states the claim | lowered to low |
+  | ? | citation not matched | The checker judged the claim supported, but its quotation could not be located in the cited text: a citation problem, not a factual one | at most medium, with the claim named |
+
+  A claim that is not ✓ sends the answer back to be rewritten (or, when evidence is missing, back to planning), up to two times. Claims that still fail are listed at the end of the conclusion, and the confidence reason says exactly why it was lowered.
 - **Rejected alternatives**: hypotheses the evidence ruled out, and why.
 - **Uncertainties**: what the agent could not establish, including any limit it hit (for example *tool-call budget reached*) or a step that failed and could not be recovered.
 

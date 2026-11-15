@@ -41,8 +41,14 @@ export interface Report {
   rejected_alternatives: { hypothesis: string; reason: string }[]; uncertainties: string[]; limits: string[];
   claims?: CheckedClaim[]; checks?: { rounds: number; checker: 'ok' | 'failed' | 'skipped'; supported: number; total: number };
 }
-export type ClaimVerdict = 'supported' | 'contradicted' | 'unsupported' | 'unchecked';
-export interface CheckedClaim { id: string; text: string; evidence: string[]; quote: string; verdict: ClaimVerdict; quote_found: boolean; explanation: string; contradicting: { evidence: string; quote: string }[] }
+/** 'unsupported' appears in answers saved by 1.0.2–1.0.3 and means 'insufficient'. */
+export type ClaimVerdict = 'supported' | 'contradicted' | 'insufficient' | 'validation_error' | 'unchecked' | 'unsupported';
+export interface CheckedClaim { id: string; text: string; evidence: string[]; quote: string; cell?: { row: string; column: string; value: string } | null; verdict: ClaimVerdict;
+  matched?: 'quote' | 'cell' | 'located' | null; support?: string | null; quote_found: boolean; explanation: string; contradicting: { evidence: string; quote: string }[] }
+export const VERDICT_LABEL: Record<ClaimVerdict, string> = { supported: 'supported', contradicted: 'contradicted', insufficient: 'not established', unsupported: 'not established', validation_error: 'citation not matched', unchecked: 'not cross-checked' };
+export const verdictMark = (v: ClaimVerdict) => (v === 'supported' ? '✓' : v === 'validation_error' || v === 'unchecked' ? '?' : '✗');
+/** How a claim cites its evidence, for display. */
+export const citationText = (c: CheckedClaim) => (c.cell ? `${c.cell.row} · ${c.cell.column} = ${c.cell.value}` : c.quote ? `“${c.quote}”` : '');
 export interface Message { id: string; chatId: string; role: 'user' | 'assistant'; text: string; runId?: string; report?: Report | null; createdAt: string }
 export interface RunInfo { id: string; status: 'running' | 'waiting' | 'complete' | 'failed' | 'stopped' | 'interrupted'; question: string; createdAt: string; finishedAt?: string; error?: string; view?: RunView; totals?: Record<string, number>; models?: Record<string, string> }
 export interface RunEvent { runId: string; seq: number; at: string; node: string; type: string; summary: string; payload: Record<string, unknown> }

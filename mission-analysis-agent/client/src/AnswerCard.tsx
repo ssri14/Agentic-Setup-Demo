@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import type { EvidenceItem, Report, RunInfo } from './api';
+import { VERDICT_LABEL, citationText, verdictMark, type EvidenceItem, type Report, type RunInfo } from './api';
 
 const KIND: Record<string, string> = { passage: 'Passage', section: 'Section', table: 'Table', figure: 'Figure', channel: 'Channel', telemetry: 'Telemetry', events: 'Events', analysis: 'Analysis', entity: 'Graph', run: 'Run' };
 
@@ -42,13 +42,14 @@ export default function AnswerCard({ report, run, onEvidence, onReplay }: { repo
           <summary>{report.claims.every((c) => c.verdict === 'supported')
             ? `All ${report.claims.length} claims checked against the evidence`
             : `${report.claims.filter((c) => c.verdict === 'supported').length} of ${report.claims.length} claims verified against the evidence`}
-            {report.checks && report.checks.rounds > 1 ? ` · corrected in ${report.checks.rounds - 1} round${report.checks.rounds > 2 ? 's' : ''}` : ''}</summary>
+            {report.checks && report.checks.rounds > 1 ? ` · checked in ${report.checks.rounds} rounds` : ''}</summary>
           <ul className="claims">{report.claims.map((c) => (
             <li key={c.id} className={`claim v-${c.verdict}`}>
-              <span className="claim-mark">{c.verdict === 'supported' ? '✓' : c.verdict === 'unchecked' ? '•' : '✗'}</span>
+              <span className="claim-mark">{verdictMark(c.verdict)}</span>
               <div><div>{c.text} {c.evidence.map((id) => <span key={id} className="ev">{id}</span>)}</div>
-                {c.quote && <div className="claim-quote">“{c.quote}”</div>}
-                {c.verdict !== 'supported' && <div className="claim-why">{c.verdict}: {c.explanation}{c.contradicting.map((x) => ` ${x.evidence} says “${x.quote}”.`).join('')}</div>}</div>
+                {citationText(c) && <div className="claim-quote">{citationText(c)}</div>}
+                {c.matched === 'located' && c.support && <div className="claim-quote">matched to: {c.support}</div>}
+                {c.verdict !== 'supported' && <div className="claim-why">{VERDICT_LABEL[c.verdict]}: {c.explanation}{c.contradicting.map((x) => ` ${x.evidence} says “${x.quote}”.`).join('')}</div>}</div>
             </li>))}</ul>
         </details>
       )}

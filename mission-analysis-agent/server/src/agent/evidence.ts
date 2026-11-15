@@ -33,6 +33,88 @@ export function labelPipeTables(text: string): string {
   return out.join('\n');
 }
 
+/**
+ * Rewrites tables that PDF text extraction keeps one cell per line, one row per block:
+ *   "ID\nSubsystem\nDepends on\n\nHLT\nHealth Aggregation\nPWR, THM, ENV, ACT\n\nSTG\n…"
+ * A header block of 2–8 short lines followed by blocks with the same number of lines becomes labelled rows.
+ */
+export function labelBlockTables(text: string): string {
+  const blocks = text.split(/\n[ \t]*\n/);
+  const lines = (b: string) => b.split('\n').map((l) => l.trim()).filter(Boolean);
+  // Column names are short labels: not sentences, not identifiers like channel names, not page running headers.
+  const headerLike = (cells: string[]) => cells.length >= 2 && cells.length <= 8
+    && cells.every((c) => c.length <= 40 && !/[.:;]$/.test(c) && !c.includes(' | ') && !/\s{2,}/.test(c) && !/[a-z0-9]_[a-z0-9]/i.test(c) && !/^\d/.test(c));
+  const out: string[] = [];
+  for (let i = 0; i < blocks.length;) {
+    const header = lines(blocks[i]);
+    if (headerLike(header)) {
+      const rows: string[][] = [];
+      let j = i + 1;
+      while (j < blocks.length && lines(blocks[j]).length === header.length && lines(blocks[j]).every((c) => c.length <= 160)) rows.push(lines(blocks[j++]));
+      if (rows.length >= (header.length === 2 ? 2 : 1)) { out.push([`[table] columns: ${header.join(' | ')}`, ...labelRows(header, rows)].join('\n')); i = j; continue; }
+    }
+    out.push(blocks[i++]);
+  }
+  return out.join('\n\n');
+}
+
+/** Both table layouts that PDF text can carry: one cell per line, and "a | b | c" lines. */
+export const labelTables = (text: string) => labelPipeTables(labelBlockTables(text));
+
+/** A table fact a claim can cite instead of a quote: the row's key, the column and the value in that cell. */
+export interface CellRef { row: string; column: string; value: string }
+
+const listTokens = (s: string) => new Set(norm(s).split(' ').filter((w) => w && !['and', 'or', 'the', 'subsystem', 'subsystems'].includes(w)));
+
+/**
+ * The labelled row in the content that states the cell, or null. The row matches when one of its cells equals the key;
+ * the column by name; the value when its items equal the cell's or are a subset of them ("PWR and THM" ⊂ "PWR, THM, ENV, ACT").
+ */
+export function cellFound(cell: CellRef, content: string): string | null {
+  const key = norm(cell.row), col = norm(cell.column), want = listTokens(cell.value);
+  if (!key || !col || !want.size) return null;
+  for (const line of content.split('\n')) {
+    const m = line.trim().match(/^Row \d+: (.*)$/);
+    if (!m) continue;
+    const cells = m[1].split(/;\s+(?=[^;=]{1,60} = )/).map((c) => { const k = c.indexOf(' = '); return k < 0 ? ['', c] : [c.slice(0, k), c.slice(k + 3)]; });
+    if (!cells.some(([, v]) => norm(v) === key)) continue;
+    const target = cells.find(([k]) => norm(k) === col) ?? cells.find(([k]) => norm(k).includes(col) || (col.includes(norm(k)) && norm(k).length > 2));
+    if (!target) continue;
+    const have = listTokens(target[1]);
+    if ([...want].every((w) => have.has(w))) return line.trim();
+  }
+  return null;
+}
+
+/**
+ * When a quote does not match character for character, find the line of the cited evidence that carries the claim:
+ * a labelled row or a sentence mentioning every identifier of the claim (at least two). Used only alongside
+ * the checker's own "supported" verdict, never on its own.
+ */
+export function locateSupport(claim: string, content: string): string | null {
+  const ids = identifiers(claim);
+  if (ids.length < 2) return null;
+  const has = (line: string, id: string) => new RegExp(`(^|[^A-Za-z0-9_])${id.replace(/[-]/g, '\\-')}([^A-Za-z0-9_]|$)`).test(line);
+  for (const raw of content.split('\n')) {
+    const line = raw.trim();
+    const row = line.match(/^Row \d+: (.*)$/);
+    if (row) {
+      // A table row supports a claim only about its own subject: the row's key (first cell) must be the claim's
+      // first identifier, and every other identifier must appear in the row's other cells.
+      const cells = row[1].split(/;\s+(?=[^;=]{1,60} = )/).map((c) => c.slice(c.indexOf(' = ') + 3));
+      if (norm(cells[0] ?? '') !== norm(ids[0])) continue;
+      const rest = cells.slice(1).join(' ; ');
+      if (ids.slice(1).every((id) => has(rest, id))) return line;
+      continue;
+    }
+    // A sentence must say something besides the names: a heading or list such as "HLT, DAQ, COM and SUP" states no relationship.
+    const says = (x: string) => norm(x).split(' ').filter((w) => !ids.some((id) => norm(id) === w) && !['and', 'or', 'the', 'of', 'to', 'a'].includes(w) && /[a-z]{3,}/.test(w)).length >= 3;
+    const sentence = line.split(/(?<=[.!?])\s+/).find((x) => x.length > 3 && ids.every((id) => has(x, id)) && says(x));
+    if (sentence) return sentence.trim();
+  }
+  return null;
+}
+
 export function tableContent(t: { title?: string | null; section?: string | null; page?: number; source?: string; columns: string[]; rows: string[][]; rows_total?: number }): string {
   const head = `[table${t.title ? ` "${t.title}"` : ''}${t.section ? `, ${t.section}` : ''}${t.page ? `, p.${t.page}` : ''}${t.source ? `, ${t.source}` : ''}] columns: ${t.columns.join(' | ')}`;
   const more = t.rows_total && t.rows_total > t.rows.length ? `\n(${t.rows_total - t.rows.length} more rows not shown)` : '';
@@ -51,20 +133,24 @@ export function norm(s: string): string {
 /** The same text with "Column = " labels removed, so a quote of the raw row ("HLT | … | PWR, THM, ENV, ACT") still matches. */
 const valuesOnly = (content: string) => content.replace(/(^|;\s*|Row \d+:\s*)[^=;\n]{1,60}? = /g, '$1');
 
-/** True when the quote (fragments separated by "..." or "…" must appear in order) occurs in the content. */
+/**
+ * True when the quote occurs in the content. A single span may be anywhere. Fragments joined by "..." or "…" must
+ * appear in order within one paragraph or one table row: words stitched from different rows, headings or paragraphs do not match.
+ */
 export function quoteFound(quote: string, content: string): boolean {
   const parts = quote.split(/\.{3}|…/).map(norm).filter((p) => p.length >= 3);
   if (!parts.length) return false;
-  for (const hay of [norm(content), norm(valuesOnly(content))]) {
-    let from = 0, ok = true;
-    for (const p of parts) {
-      const i = hay.indexOf(p, from);
-      if (i < 0) { ok = false; break; }
-      from = i + p.length;
-    }
-    if (ok) return true;
-  }
-  return false;
+  if (parts.length === 1) return [content, valuesOnly(content)].some((h) => norm(h).includes(parts[0]));
+  const inOrder = (hay: string) => {
+    let from = 0;
+    for (const p of parts) { const i = hay.indexOf(p, from); if (i < 0) return false; from = i + p.length; }
+    return true;
+  };
+  const units = content.split(/\n[ \t]*\n/).flatMap((par) => {
+    const lines = par.split('\n');
+    return lines.some((l) => /^Row \d+: /.test(l.trim())) ? lines : [par];
+  });
+  return units.some((u) => inOrder(norm(u)) || inOrder(norm(valuesOnly(u))));
 }
 
 const STOP = new Set(['THE', 'AND', 'FOR', 'NOT', 'ALL', 'ANY', 'ARE', 'BUT', 'ITS', 'HAS', 'WAS', 'ONE', 'TWO', 'PDF', 'ID', 'OK', 'NO', 'OR', 'IF', 'IS', 'IT', 'OF', 'ON', 'TO', 'IN', 'AT', 'BY', 'AN', 'AS', 'BE', 'UTC']);

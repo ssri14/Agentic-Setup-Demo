@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { api, type RunEvent } from './api';
+import { VERDICT_LABEL, api, citationText, verdictMark, type CheckedClaim, type RunEvent } from './api';
 import Modal from './Modal';
 import { Plan } from './PlanList';
 import { PlanDag } from './PlanDag';
@@ -141,11 +141,12 @@ function Detail({ e, runId }: { e: RunEvent; runId: string }) {
     </>);
     case 'claim_check': return (<>
       <div className="kv2"><span>Round</span><b>{p.round}</b><span>Checker</span><b>{p.checker_error ? `unavailable (${p.checker_error})` : p.next ?? '–'}</b></div>
-      <ul className="claims">{(p.claims ?? []).map((c: { id: string; text: string; verdict: string; quote: string; quote_found: boolean; explanation: string; contradicting: { evidence: string; quote: string }[]; evidence: string[] }) => (
-        <li key={c.id} className={`claim v-${c.verdict}`}><span className="claim-mark">{c.verdict === 'supported' ? '✓' : c.verdict === 'unchecked' ? '•' : '✗'}</span>
+      <ul className="claims">{(p.claims ?? []).map((c: CheckedClaim) => (
+        <li key={c.id} className={`claim v-${c.verdict}`}><span className="claim-mark">{verdictMark(c.verdict)}</span>
           <div><div><b>{c.id}</b> {c.text} <span className="muted">[{c.evidence.join(', ')}]</span></div>
-            <div className="claim-quote">“{c.quote}” {c.quote_found ? '· quote found' : '· quote NOT found'}</div>
-            <div className={c.verdict === 'supported' ? 'muted small' : 'claim-why'}>{c.verdict}: {c.explanation}{c.contradicting.map((x) => ` ${x.evidence} says “${x.quote}”.`).join('')}</div></div></li>))}</ul>
+            <div className="claim-quote">{citationText(c)} · {c.matched === 'quote' ? 'quote found' : c.matched === 'cell' ? 'table cell found' : c.matched === 'located' ? 'reworded; matched to the source line' : c.quote_found ? 'quote found' : 'support NOT found in the cited text'}</div>
+            {c.matched === 'located' || c.matched === 'cell' ? <div className="claim-quote">{c.support}</div> : null}
+            <div className={c.verdict === 'supported' ? 'muted small' : 'claim-why'}>{VERDICT_LABEL[c.verdict]}: {c.explanation}{c.contradicting.map((x) => ` ${x.evidence} says “${x.quote}”.`).join('')}</div></div></li>))}</ul>
       {p.guidance && <p className="muted small">Guidance: {p.guidance}</p>}
     </>);
     case 'node_failed': return (<><div className="kv2"><span>Node</span><b>{p.node}</b></div><div className="task-note err">{p.error}</div><p className="muted small">{p.node === 'report' ? 'A partial answer is built without the model.' : 'The failure goes to the recovery node.'}</p></>);

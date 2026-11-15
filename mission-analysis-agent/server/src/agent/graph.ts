@@ -26,7 +26,7 @@ import type { Sources } from '../tools/sources.js';
 import { trim } from '../tools/util.js';
 import type { EventSink } from './events.js';
 import { completeJson, type ChatMessage, type ChatModel, type ModelRole } from './llm.js';
-import { MAX_CONTENT, labelPipeTables, quoteFound, relatedLines, tableContent } from './evidence.js';
+import { MAX_CONTENT, cellFound, labelTables, locateSupport, quoteFound, relatedLines, tableContent } from './evidence.js';
 import { analystMessages, checkerMessages, missionBlock, plannerMessages, recoveryMessages, reporterMessages, toolCatalog, verifierMessages, type MissionContext } from './prompts.js';
 import { AnalystOutput, CheckOutput, PlanOutput, ReportOutput, TASK_REF, VerifyOutput, recoverSchema, taskRefs, type Claim, type ReportOutput as ReportValue } from './schemas.js';
 
@@ -47,8 +47,17 @@ export interface PlanVersion { version: number; objective: string; rationale: st
 export interface HypothesisState { id: string; statement: string; confirm_if: string; refute_if: string; status: string; confidence: string; rule?: string | null; note?: string; evidence_for: string[]; evidence_against: string[] }
 /** snippet: a short excerpt for the UI. content: the full text the models read and quotes are checked against. */
 export interface EvidenceItem extends Evidence { id: string; task: string; snippet: string; content?: string; artifact?: string }
-export type ClaimVerdict = 'supported' | 'contradicted' | 'unsupported' | 'unchecked';
-export interface CheckedClaim extends Claim { verdict: ClaimVerdict; quote_found: boolean; explanation: string; contradicting: { evidence: string; quote: string }[] }
+/**
+ * supported: the evidence establishes the claim (checker) and its support was located in the cited text.
+ * contradicted: evidence explicitly disagrees, with the contradicting words verified in the evidence.
+ * insufficient: the evidence does not establish the claim.
+ * validation_error: the checker judged it supported, but its quote or cell could not be matched in the cited text
+ *   (a formatting or extraction problem, never treated as a contradiction).
+ * unchecked: support located, but the checker model was unavailable.
+ */
+export type ClaimVerdict = 'supported' | 'contradicted' | 'insufficient' | 'validation_error' | 'unchecked';
+export type SupportMatch = 'quote' | 'cell' | 'located' | null;
+export interface CheckedClaim extends Claim { verdict: ClaimVerdict; matched: SupportMatch; support: string | null; quote_found: boolean; explanation: string; contradicting: { evidence: string; quote: string }[] }
 export interface Counters { toolCalls: number; llmCalls: number; revisions: number; clarifications: number; recoveries: number }
 /** What failed and must be recovered from: tool tasks in execute, or the planner or verifier model. */
 export interface Failure { node: 'execute' | 'plan' | 'verify'; tasks: string[]; error: string }
@@ -194,12 +203,12 @@ function contentFor(e: Evidence, result: ToolResult): string {
   const d = result.data as Record<string, unknown>;
   try {
     switch (e.kind) {
-      case 'passage': return labelPipeTables(String((d.passages as { chunk_id: string; text: string }[]).find((p) => p.chunk_id === e.ref)?.text ?? '')).slice(0, MAX_CONTENT);
+      case 'passage': return labelTables(String((d.passages as { chunk_id: string; text: string }[]).find((p) => p.chunk_id === e.ref)?.text ?? '')).slice(0, MAX_CONTENT);
       case 'table': {
         const t = (d.tables as { asset_id: string; title: string | null; section: string | null; page: number; source: string; columns: string[]; rows: string[][]; rows_total: number }[]).find((x) => String(x.asset_id) === e.ref);
         return t ? tableContent(t).slice(0, MAX_CONTENT) : '';
       }
-      case 'section': return d.content ? labelPipeTables((d.content as { text: string }[]).map((c) => c.text).join('\n')).slice(0, MAX_CONTENT) : result.summary;
+      case 'section': return d.content ? labelTables((d.content as { text: string }[]).map((c) => c.text).join('\n')).slice(0, MAX_CONTENT) : result.summary;
       default: return snippetFor(e, result);
     }
   } catch { return snippetFor(e, result); }
@@ -489,6 +498,14 @@ export function buildAgent(ctx: AgentContext) {
       }), counters, 3000));
     } catch (error) { return nodeFailed('verify', s, counters, error); }
     const known = new Set(s.evidence.map((e) => e.id));
+    // Models sometimes name a hypothesis by "H1: statement" or by its statement: map those to the id deterministically.
+    const hypothesisId = (raw: string) => {
+      const m = raw.trim().match(/^H\d+\b/i) ?? raw.match(/\bH(\d+)\b/);
+      if (m) return m[0].toUpperCase().startsWith('H') ? m[0].toUpperCase() : `H${m[1]}`;
+      const n = (x: string) => x.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+      return s.hypotheses.find((h) => n(h.statement) === n(raw) || (n(raw).length > 20 && (n(h.statement).includes(n(raw)) || n(raw).includes(n(h.statement)))))?.id ?? raw;
+    };
+    for (const v of value.verdicts) v.hypothesis = hypothesisId(v.hypothesis);
     const hypotheses = s.hypotheses.map((h) => {
       const v = value.verdicts.find((x) => x.hypothesis === h.id);
       return v ? { ...h, status: v.status, confidence: v.confidence, rule: v.rule ?? null, note: v.note,
@@ -643,10 +660,20 @@ export function buildAgent(ctx: AgentContext) {
     const contentOf = (id: string) => { const e = pool.get(id); return e ? (e.content ?? e.snippet) : ''; };
     const round = (s.checkRounds ?? 0) + 1;
 
-    // 1. Deterministic: the cited evidence exists and contains the quoted words.
+    // 1. Deterministic: find the claim's support in the cited evidence text, by exact quote, by table cell,
+    //    or (when the wording differs) by locating the row or sentence that carries all its identifiers.
     const det = draft.claims.map((c) => {
       const cited = c.evidence.filter((id) => pool.has(id));
-      return { id: c.id, cited, quoteIn: cited.find((id) => c.quote && quoteFound(c.quote, contentOf(id))) ?? null };
+      for (const id of cited) {
+        if (c.quote && quoteFound(c.quote, contentOf(id))) return { cited, matched: 'quote' as const, in: id, support: c.quote };
+        const row = c.cell ? cellFound(c.cell, contentOf(id)) : null;
+        if (row) return { cited, matched: 'cell' as const, in: id, support: row };
+      }
+      for (const id of cited) {
+        const line = locateSupport(c.text, contentOf(id));
+        if (line) return { cited, matched: 'located' as const, in: id, support: line };
+      }
+      return { cited, matched: null, in: null, support: null };
     });
 
     // 2. The checker model: does the evidence, read in full, state each claim, or contradict it?
@@ -656,9 +683,12 @@ export function buildAgent(ctx: AgentContext) {
       const items = s.evidence.map((e) => ({ id: e.id, content: e.content ?? e.snippet }));
       const claimsText = draft.claims.map((c, i) => {
         const d = det[i];
-        const status = !d.cited.length ? 'cites no evidence from this run' : d.quoteIn ? `quote found in ${d.quoteIn}` : `QUOTE NOT FOUND in ${d.cited.join(', ')}`;
+        const cited = c.cell ? `cell: row "${c.cell.row}", column "${c.cell.column}", value "${c.cell.value}"` : `quote: "${c.quote}"`;
+        const status = !d.cited.length ? 'cites no evidence from this run'
+          : d.matched === 'quote' ? `quote found in ${d.in}` : d.matched === 'cell' ? `cell found in ${d.in}: ${d.support}`
+          : d.matched === 'located' ? `exact wording not found; the line of ${d.in} that mentions all its identifiers is: ${d.support}` : `SUPPORT NOT FOUND in ${d.cited.join(', ')}`;
         const related = relatedLines(c.text, items);
-        return `${c.id}: ${c.text}\n  cites: ${c.evidence.join(', ') || 'none'} · quote: "${c.quote}" · ${status}` +
+        return `${c.id}: ${c.text}\n  cites: ${c.evidence.join(', ') || 'none'} · ${cited} · ${status}` +
           (related.length ? `\n  lines in the evidence that mention the same identifiers:\n${related.map((l) => `    ${l}`).join('\n')}` : '');
       }).join('\n\n');
       try {
@@ -672,29 +702,38 @@ export function buildAgent(ctx: AgentContext) {
       }
     }
 
-    // 3. Combine. A contradiction counts only if its quoted words are really in the evidence it names.
+    // 3. Reconcile. A contradiction needs its own words verified in the evidence; a support that cannot be matched
+    //    to the text is a validation error, not a contradiction; "located" support counts only with the checker's agreement.
     const results: CheckedClaim[] = draft.claims.map((c, i) => {
       const d = det[i];
       const m = model?.claims.find((x) => x.id === c.id);
       const contradicting = (m?.contradicting ?? []).filter((x) => pool.has(x.evidence) && quoteFound(x.quote, contentOf(x.evidence)));
       let verdict: ClaimVerdict, explanation = m?.explanation ?? '';
+      const exact = d.matched === 'quote' || d.matched === 'cell';
       if (m?.verdict === 'contradicted' && contradicting.length) verdict = 'contradicted';
-      else if (!d.cited.length) { verdict = 'unsupported'; explanation = `cites no evidence gathered in this run${explanation ? `; ${explanation}` : ''}`; }
-      else if (!d.quoteIn) { verdict = 'unsupported'; explanation = `the quoted words are not in ${d.cited.join(', ')}${explanation ? `; ${explanation}` : ''}`; }
-      else if (!m) { verdict = 'unchecked'; explanation = explanation || 'quote verified; the claim checker was not available'; }
-      else if (m.verdict === 'contradicted') { verdict = 'unsupported'; explanation = `${explanation} (the contradicting quote could not be found in the evidence)`; }
-      else verdict = m.verdict;
-      return { ...c, verdict, quote_found: Boolean(d.quoteIn), explanation, contradicting };
+      else if (!d.cited.length) { verdict = 'insufficient'; explanation = `cites no evidence gathered in this run${explanation ? `; ${explanation}` : ''}`; }
+      else if (!m) {
+        if (exact) { verdict = 'unchecked'; explanation = explanation || 'support found in the evidence; the claim checker was not available'; }
+        else { verdict = 'validation_error'; explanation = `its quotation could not be matched to ${d.cited.join(', ')} and the claim checker was not available`; }
+      }
+      else if (m.verdict === 'supported') {
+        if (d.matched) { verdict = 'supported'; if (d.matched === 'located') explanation = `${explanation} (quotation reworded; matched to the source line instead)`.trim(); }
+        else { verdict = 'validation_error'; explanation = `the checker judged it supported, but its quotation could not be matched to ${d.cited.join(', ')}${explanation ? `; ${explanation}` : ''}`; }
+      }
+      else if (m.verdict === 'contradicted') { verdict = 'insufficient'; explanation = `${explanation} (the contradicting text the checker quoted is not in the evidence)`; }
+      else verdict = 'insufficient';
+      return { ...c, verdict, matched: d.matched, support: d.support, quote_found: d.matched === 'quote', explanation, contradicting };
     });
-    const bad = results.filter((r) => r.verdict === 'contradicted' || r.verdict === 'unsupported');
+    const bad = results.filter((r) => r.verdict === 'contradicted' || r.verdict === 'insufficient' || r.verdict === 'validation_error');
     const ok = results.filter((r) => r.verdict === 'supported').length;
-    const summary = !results.length ? 'No claims to check' : `${ok} of ${results.length} claims supported${bad.length ? `, ${bad.filter((r) => r.verdict === 'contradicted').length} contradicted, ${bad.filter((r) => r.verdict === 'unsupported').length} unsupported` : ''}`;
+    const count = (v: ClaimVerdict) => results.filter((r) => r.verdict === v).length;
+    const summary = !results.length ? 'No claims to check' : `${ok} of ${results.length} claims supported${bad.length ? ['contradicted', 'insufficient', 'validation_error'].map((v) => (count(v as ClaimVerdict) ? `, ${count(v as ClaimVerdict)} ${v.replace('_', ' ')}` : '')).join('') : ''}`;
     await ctx.sink.emit('check', 'claim_check', `Round ${round}: ${summary}`, { round, claims: results, next: model?.next ?? null, guidance: model?.guidance ?? '', checker_error: checkerError });
 
     // 4. Send problems back while rounds and budgets allow.
     if (bad.length && round < 3 && !limit) {
-      const problems = bad.map((r) => `${r.id} "${r.text}" — ${r.verdict}: ${r.explanation}${r.contradicting.length ? ` The evidence says: ${r.contradicting.map((x) => `${x.evidence} "${x.quote}"`).join('; ')}` : ''}`).join('\n') + (model?.guidance ? `\nChecker guidance: ${model.guidance}` : '');
-      const investigate = model?.next === 'investigate' && counters.revisions < ctx.budgets.maxRevisions;
+      const problems = bad.map((r) => `${r.id} "${r.text}" — ${r.verdict.replace('_', ' ')}: ${r.explanation}${r.contradicting.length ? ` The evidence says: ${r.contradicting.map((x) => `${x.evidence} "${x.quote}"`).join('; ')}` : ''}${r.verdict === 'validation_error' ? ' Fix the citation: quote one contiguous span exactly as written, or for a table fact give "cell": {"row", "column", "value"}.' : ''}`).join('\n') + (model?.guidance ? `\nChecker guidance: ${model.guidance}` : '');
+      const investigate = model?.next === 'investigate' && counters.revisions < ctx.budgets.maxRevisions && bad.some((r) => r.verdict !== 'validation_error');
       const route: Route = investigate ? 'plan' : 'report';
       const reason = `Claim check found ${bad.length} problem(s) in the draft answer:\n${problems}`;
       await ctx.sink.emit('check', 'decision', `${investigate ? 'investigate further' : 'rewrite the answer'}: ${trim(problems, 150)}`,
@@ -713,9 +752,13 @@ export function buildAgent(ctx: AgentContext) {
     let cap: keyof typeof rank = 'high';
     const why: string[] = [];
     const lower = (to: keyof typeof rank, reason: string) => { if (rank[to] < rank[cap]) cap = to; why.push(reason); };
-    const bad = results.filter((r) => r.verdict === 'contradicted' || r.verdict === 'unsupported');
+    const bad = results.filter((r) => r.verdict === 'contradicted' || r.verdict === 'insufficient');
+    const unmatched = results.filter((r) => r.verdict === 'validation_error');
     if (!results.length) lower('low', 'no claim in the answer could be tied to quoted evidence');
-    if (bad.length) lower('low', `${bad.length} claim(s) could not be verified against the evidence`);
+    const contradicted = bad.filter((r) => r.verdict === 'contradicted').length, insufficient = bad.length - contradicted;
+    if (contradicted) lower('low', `${contradicted} claim(s) contradicted by the evidence`);
+    if (insufficient) lower('low', `${insufficient} claim(s) not established by the evidence`);
+    if (unmatched.length) lower('medium', `${unmatched.length} claim(s) judged supported by the checker, but the cited text could not be matched to confirm it (${unmatched.map((r) => r.id).join(', ')})`);
     if (results.some((r) => r.verdict === 'unchecked')) lower('medium', 'claims were not cross-checked because the claim checker was unavailable');
     const limits = [...s.limits, ...(info.limit ? [info.limit] : [])];
     if (limits.length) lower('medium', 'the investigation hit a limit or a failure');
@@ -732,14 +775,16 @@ export function buildAgent(ctx: AgentContext) {
     const finalState = { ...s, tasks } as State;
 
     const known = new Map(s.evidence.map((e) => [e.id, e]));
-    const conclusion = bad.length
-      ? `${draft.conclusion}\n\n> **Not verified against the evidence:** ${bad.map((r) => `${r.text} (${r.verdict === 'contradicted' ? `contradicted by ${r.contradicting.map((x) => x.evidence).join(', ')}` : 'no supporting quote'})`).join('; ')}`
-      : draft.conclusion;
+    const notes = [
+      bad.length ? `> **Not verified against the evidence:** ${bad.map((r) => `${r.text} (${r.verdict === 'contradicted' ? `contradicted by ${r.contradicting.map((x) => x.evidence).join(', ')}` : 'not established by the cited evidence'})`).join('; ')}` : '',
+      unmatched.length ? `> **Citation not matched:** ${unmatched.map((r) => `${r.text} (the checker found it supported by ${r.evidence.join(', ')}, but the quoted text could not be located there)`).join('; ')}` : '',
+    ].filter(Boolean);
+    const conclusion = notes.length ? `${draft.conclusion}\n\n${notes.join('\n>\n')}` : draft.conclusion;
     const cited = [...new Set([...draft.evidence, ...results.flatMap((r) => [...r.evidence, ...r.contradicting.map((x) => x.evidence)]), ...(conclusion.match(/E\d+/g) ?? [])])].filter((id) => known.has(id));
     const report = {
       ...draft, conclusion, confidence,
       confidence_reason: lowered ? `${draft.confidence_reason} — lowered from ${draft.confidence}: ${why.join('; ')}` : draft.confidence_reason,
-      uncertainties: [...draft.uncertainties, ...bad.map((r) => `Unverified claim: ${r.text}`)],
+      uncertainties: [...draft.uncertainties, ...bad.map((r) => `${r.verdict === 'contradicted' ? 'Contradicted' : 'Unverified'} claim: ${r.text}`), ...unmatched.map((r) => `Citation not matched (checker: supported): ${r.text}`)],
       evidence: cited.map((id) => { const { content: _content, ...rest } = known.get(id)!; return rest; }),
       claims: results, checks: { rounds: info.rounds ?? 0, checker: info.checker, supported: results.filter((r) => r.verdict === 'supported').length, total: results.length },
       limits,

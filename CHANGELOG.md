@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.0.4 — 2026-11-15
+
+After 1.0.2 the HLT answer was correct but reported LOW confidence with "Not verified against the evidence: HLT depends on the PWR, THM, ENV, and ACT subsystems (no supporting quote)". Cause, confirmed on the recorded text: the evidence was a search passage in which PyMuPDF keeps the SEC-03 table one cell per line, one row per block. Only "a | b | c" tables were turned into labelled rows, so the reporter's quote "HLT … Depends on PWR, THM, ENV, ACT" (header before the row, value after it) failed the strict in-order match, and that failure overruled the checker's "supported".
+
+- **Structure-aware evidence.** One-cell-per-line tables in passages and sections are recognised and rendered as labelled rows (headers that look like page running headers, identifiers or data rows are not taken as column names).
+- **Table-cell citations.** A claim may cite `"cell": {"row": "HLT", "column": "Depends on", "value": "PWR, THM, ENV, ACT"}`, verified against the row's key, the column and the cell's items (a subset such as "PWR and THM" matches; other values do not).
+- **No stitched quotations.** Quote fragments must lie in one table row or one paragraph; the reporter is told to quote one contiguous span or cite the cell.
+- **Reworded claims located.** When the wording differs, the evidence line that carries the claim is located instead: a table row only if the claim's subject is that row's key; a sentence only if it says more than a list of names. Located support counts only together with the checker's "supported".
+- **Separate verdicts.** supported / contradicted / insufficient (not established) / validation_error (citation not matched) / unchecked. A matching failure is never treated as a contradiction: it caps confidence at medium with the claim named, while contradicted or unestablished claims lower it to low. Each case is listed separately in the answer.
+- **Verifier output hardening.** A hypothesis named by its statement or as "H2: statement" is mapped to its id deterministically instead of failing validation.
+- 15 new tests (70 in total): correct tables, incorrect relationships, misleading headings and malformed quotations on the real SEC-03/SEC-04 text, and the recorded HLT run (exact quotation, cell citation, reworded quotation) answering with high confidence in one round.
+
 ## 1.0.3 — 2026-11-15
 
 - **Fix: references between dependent tool calls.** The planner wrote `read_section {"section": "@S1.1"}` ("read the section the search found"), in the same step as the search. References were supported only in `run_analysis` inputs, so the literal "@S1.1" failed ("No section @S1.1") and the run stopped early with lowered confidence.

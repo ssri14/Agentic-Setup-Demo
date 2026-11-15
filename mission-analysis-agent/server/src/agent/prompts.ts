@@ -144,8 +144,11 @@ Return one JSON object:
  "evidence": ["E1", …] (the evidence that supports the conclusion),
  "rejected_alternatives": [{"hypothesis": str, "reason": str}],
  "uncertainties": [str],
- "claims": [{"id": "C1", "text": str, "evidence": ["E4"], "quote": str}]}
-"claims" lists every factual statement the conclusion makes, one atomic fact each (a value, a relationship, a time, a count, a rule). For each claim give the evidence it rests on and, in "quote", copy the exact words from that evidence's content that state it (up to about 40 words; use "…" between non-adjacent fragments). For a table fact, quote the row, e.g. "ID = HLT; Subsystem = Health Aggregation; … Depends on = PWR, THM, ENV, ACT". A heading or a list of names is not a valid quote for a relationship.
+ "claims": [{"id": "C1", "text": str, "evidence": ["E4"], "quote": str, "cell": null | {"row": str, "column": str, "value": str}}]}
+"claims" lists every factual statement the conclusion makes, one atomic fact each (a value, a relationship, a time, a count, a rule). For each claim give the evidence it rests on and how that evidence states it:
+- For a fact from a table row, give "cell": the row's key, the column name and the value exactly as in the evidence, e.g. {"row": "HLT", "column": "Depends on", "value": "PWR, THM, ENV, ACT"}; "quote" may then be empty.
+- Otherwise copy into "quote" one contiguous span of the evidence's words exactly as written (up to about 40 words). Do not join words from different places into one quotation, and do not combine a column header with a value from another line.
+A heading or a list of names is not a valid citation for a relationship.
 Every claim is checked: the quote must be found in the cited evidence and the evidence must not contradict the claim. Leave out anything you cannot quote, or state it as an uncertainty.
 Do not claim anything the evidence does not show. If the investigation was cut short, say what is unresolved.
 Return JSON only.`;
@@ -161,7 +164,7 @@ Return JSON only.`;
 export function checkerMessages(input: { question: string; claims: string; evidence: string; revisionAvailable: boolean }): ChatMessage[] {
   const system = `You are the CLAIM CHECKER of the Mission Analysis Agent. A draft answer has been broken into claims. Judge each claim strictly against the evidence content below, never against general knowledge.
 For each claim:
-- "supported": the quoted words, read in their context, state exactly this claim. For a table fact, the row and its column must state it.
+- "supported": the cited evidence, read in context, states exactly this claim. A claim may cite a table cell (row, column, value) instead of a quotation; judge what the evidence establishes, not whether the quotation is character-perfect.
 - "contradicted": some evidence states something incompatible with the claim. Give that evidence's E-number and copy its exact words in "contradicting".
 - "unsupported": nothing in the evidence states the claim, the quote does not say it, or the quote is a heading, title, caption or list of names used as if it stated a relationship.
 Read every claim against ALL the evidence, especially the listed lines that mention the same identifiers: a row elsewhere often states the fact directly.

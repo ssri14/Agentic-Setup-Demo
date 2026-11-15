@@ -405,6 +405,8 @@ ul.claims { list-style: none; padding-left: 0 !important; display: grid; gap: 8p
 .claim { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 6px; font-size: 13.5px; }
 .claim-mark { font-weight: 800; }
 .claim.v-supported .claim-mark { color: var(--ok); }
-.claim.v-contradicted .claim-mark, .claim.v-unsupported .claim-mark { color: #d1453b; }
+.claim.v-contradicted .claim-mark, .claim.v-unsupported .claim-mark, .claim.v-insufficient .claim-mark { color: #d1453b; }
+.claim.v-validation_error .claim-mark, .claim.v-unchecked .claim-mark { color: var(--warn); }
+.claim.v-validation_error .claim-why, .claim.v-unchecked .claim-why { color: var(--warn); }
 .claim-quote { color: var(--muted); font-size: 12.5px; font-style: italic; margin-top: 2px; }
 .claim-why { color: #d1453b; font-size: 12.5px; margin-top: 2px; }

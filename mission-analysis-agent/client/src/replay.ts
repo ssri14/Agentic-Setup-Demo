@@ -33,7 +33,7 @@ export function category(type: string, payload: Record<string, unknown> = {}): C
   if (type === 'decision' || type === 'budget_warning') return 'decision';
   if (type === 'plan_created' || type === 'plan_revised') return 'plan';
   if (type.startsWith('clarification')) return 'clarify';
-  if (type === 'claim_check') return (payload.claims as { verdict: string }[] | undefined)?.some((c) => c.verdict === 'contradicted' || c.verdict === 'unsupported') ? 'fail' : 'verify';
+  if (type === 'claim_check') return (payload.claims as { verdict: string }[] | undefined)?.some((c) => c.verdict !== 'supported' && c.verdict !== 'unchecked') ? 'fail' : 'verify';
   if (type === 'run_started' || type === 'run_finished') return 'run';
   return 'other';
 }

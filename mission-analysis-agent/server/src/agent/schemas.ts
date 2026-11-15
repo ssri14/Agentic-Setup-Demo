@@ -92,7 +92,7 @@ export const Confidence = z.enum(['high', 'medium', 'low']);
 
 export const VerifyOutput = z.object({
   verdicts: z.array(z.object({
-    hypothesis: z.string().regex(/^H\d+$/),
+    hypothesis: z.string().min(1).max(600),          // normally "H1"; other forms are mapped to the id by the verify node
     status: VerdictStatus,
     confidence: Confidence,
     rule: z.string().max(40).nullish(),
@@ -114,6 +114,8 @@ export const Claim = z.object({
   text: z.string().min(3).max(500),
   evidence: z.array(z.string().regex(/^E\d+$/)).max(4).default([]),
   quote: z.string().max(500).default(''),
+  /** For a table fact: the row's key, the column and the value in that cell, instead of a stitched quotation. */
+  cell: z.object({ row: z.string().min(1).max(120), column: z.string().min(1).max(120), value: z.string().min(1).max(300) }).nullish(),
 });
 export type Claim = z.output<typeof Claim>;
 

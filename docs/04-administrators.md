@@ -102,7 +102,7 @@ The agent uses five model **roles**:
 | **Verifier** | Tests the hypotheses after each step and decides what happens next. Also makes recovery decisions when something fails |
 | **Analyst** | Writes the Python that `run_analysis` executes in the sandbox |
 | **Reporter** | Drafts the answer from verified findings, listing each factual claim with the evidence and the exact words that state it. Also titles new chats |
-| **Checker** | Checks every claim of a draft against the evidence before it is published. Settings saved before version 1.0.2 use the verifier's model for it; an independent model is a good choice |
+| **Checker** | Judges every claim of a draft against the evidence before it is published (supported, contradicted, not established). Quotes and table cells are also matched to the text without a model. Settings saved before version 1.0.2 use the verifier's model for it; an independent model is a good choice |
 
 For each role, choose a **Provider** and a **Model**, then **Save**. New questions use the new settings; questions already running keep theirs. Providers appear only when their keys are set in `.env` ([Guide 1](01-infrastructure.md#configuration-reference)):
 

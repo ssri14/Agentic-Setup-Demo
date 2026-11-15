@@ -348,7 +348,7 @@ describe('claim check (document evidence interpretation)', () => {
   };
   const rightDraft: Reply = (m) => {
     expect(m[1].content).toContain('Your previous draft failed the claim check');
-    const row = idWith(m[1].content, 'Depends on = PWR, THM, ENV, ACT');
+    const row = idWith(m[1].content, 'Observation responsibility = Collated warnings and degraded-health classifications; Depends on = PWR, THM, ENV, ACT');
     return JSON.stringify({ conclusion: `HLT (Health Aggregation) collates warnings and degraded-health classifications; it depends on PWR, THM, ENV and ACT [${row}].`, confidence: 'high', confidence_reason: 'table row', evidence: [row],
       claims: [{ id: 'C1', text: 'HLT depends on PWR, THM, ENV and ACT', evidence: [row], quote: 'ID = HLT; Subsystem = Health Aggregation; … Depends on = PWR, THM, ENV, ACT' },
         { id: 'C2', text: 'HLT collates warnings and degraded-health classifications', evidence: [row], quote: 'Collated warnings and degraded-health classifications' }] });
@@ -384,7 +384,7 @@ describe('claim check (document evidence interpretation)', () => {
     const events = await store.events.list(run.id);
     const checks = events.filter((e) => e.type === 'claim_check').map((e) => e.payload as { round: number; claims: { id: string; verdict: string }[] });
     expect(checks[0].claims).toEqual([expect.objectContaining({ id: 'C1', verdict: 'contradicted' })]);
-    expect(checks[1].claims.every((c) => c.verdict === 'supported')).toBe(true);
+    expect(checks[1].claims.map((c) => c.verdict), JSON.stringify(checks[1].claims)).toEqual(['supported', 'supported']);
     expect(events.find((e) => e.type === 'decision' && (e.payload as { by: string }).by === 'check')!.payload).toMatchObject({ action: 'rewrite', route: 'report' });
     const answer = (await store.messages.list(chat.id)).find((m) => m.role === 'assistant')!;
     expect(answer.text).toContain('PWR, THM, ENV and ACT');
@@ -402,11 +402,11 @@ describe('claim check (document evidence interpretation)', () => {
     const r = answer.report as { confidence: string; confidence_reason: string; uncertainties: string[]; checks: { rounds: number } };
     expect(r.checks.rounds).toBe(3);                                      // two rewrites, then published as unverified
     expect(r.confidence).toBe('low');
-    expect(r.confidence_reason).toMatch(/lowered from high: 1 claim\(s\) could not be verified/);
+    expect(r.confidence_reason).toMatch(/lowered from high: 1 claim\(s\) contradicted by the evidence/);
     expect(answer.text).toMatch(/Not verified against the evidence:\*\* HLT depends on DAQ, COM and SUP \(contradicted by E\d+\)/);
   });
 
-  it('treats a quote that is not in the cited evidence as unsupported, whatever the checker says', async () => {
+  it('reports a quote that cannot be matched as a citation problem, not as a verified or contradicted claim', async () => {
     const invented: Reply = (m) => { const row = idWith(m[1].content, 'Depends on = PWR, THM, ENV, ACT');
       return JSON.stringify({ conclusion: `HLT depends on CLK [${row}].`, confidence: 'high', confidence_reason: 'from the table', evidence: [row],
         claims: [{ id: 'C1', text: 'HLT depends on CLK', evidence: [row], quote: 'HLT depends on CLK' }] }); };
@@ -414,8 +414,12 @@ describe('claim check (document evidence interpretation)', () => {
     const run = await runner(model).start(chat, user, mission, question);
     expect((await settle(run.id)).status).toBe('complete');
     const first = (await store.events.list(run.id)).find((e) => e.type === 'claim_check')!.payload as { claims: { verdict: string; explanation: string }[] };
-    expect(first.claims[0]).toMatchObject({ verdict: 'unsupported', explanation: expect.stringContaining('the quoted words are not in') });
-    expect(((await store.messages.list(chat.id)).find((m) => m.role === 'assistant')!.report as { confidence: string }).confidence).toBe('low');
+    expect(first.claims[0]).toMatchObject({ verdict: 'validation_error', matched: null, explanation: expect.stringContaining('could not be matched to') });
+    const answer = (await store.messages.list(chat.id)).find((m) => m.role === 'assistant')!;
+    const r = answer.report as { confidence: string; confidence_reason: string };
+    expect(r.confidence).toBe('medium');                                  // explained, never silently lowered
+    expect(r.confidence_reason).toMatch(/judged supported by the checker, but the cited text could not be matched/);
+    expect(answer.text).toContain('**Citation not matched:** HLT depends on CLK');
   });
 
   it('ignores a contradiction whose quote is not in the evidence', async () => {
@@ -424,7 +428,7 @@ describe('claim check (document evidence interpretation)', () => {
     const run = await runner(model).start(chat, user, mission, question);
     await settle(run.id);
     const first = (await store.events.list(run.id)).find((e) => e.type === 'claim_check')!.payload as { claims: { verdict: string }[] };
-    expect(first.claims.map((c) => c.verdict)).toEqual(['unsupported', 'unsupported']);  // demoted, never "contradicted" on invented text
+    expect(first.claims.map((c) => c.verdict)).toEqual(['insufficient', 'insufficient']);  // demoted, never "contradicted" on invented text
   });
 
   it('goes back to planning when the checker asks for more retrieval', async () => {
@@ -508,6 +512,56 @@ describe('task references between dependent tool calls', () => {
     expect((await settle(run.id)).status).toBe('complete');
     const failed = (await events(run.id)).find((e) => e.type === 'tool_result' && (e.payload as { task: string }).task === 'S1.2')!.payload as { ok: boolean; error: string };
     expect(failed).toMatchObject({ ok: false, error: 'S1.1 found no section to read (it returned no document results)' });
+  });
+});
+
+describe('claim validation reconciled with the verifier (recorded HLT run)', () => {
+  const question = 'What is the purpose of the Health Aggregation (HLT) subsystem in Brahmastra, and which other subsystems does it depend on? Cite the relevant section of the technical reference.';
+  const title = ['{"title":"HLT overview"}'];
+  const plan = JSON.stringify({ objective: 'Identify the purpose of HLT and the subsystems it depends on', hypotheses: [
+    { id: 'H1', statement: 'SEC-03 states the purpose of HLT' }, { id: 'H2', statement: 'SEC-03 lists the subsystems HLT depends on' }],
+    steps: [{ id: 'S1', title: 'Find the section describing HLT', tasks: [{ id: 'S1.1', tool: 'search_documents', args: { query: 'Health stage safety status consolidates subsystem warnings', limit: 1 }, purpose: 'HLT section' }] }] });
+  // The verifier named the hypotheses by their statements, not by H1/H2 (as observed in the run).
+  const verifier = JSON.stringify({ verdicts: [
+    { hypothesis: 'SEC-03 states the purpose of HLT', status: 'supported', confidence: 'high', evidence_for: ['E1'], note: 'HLT consolidates subsystem warnings' },
+    { hypothesis: 'H2: SEC-03 lists the subsystems HLT depends on', status: 'supported', confidence: 'high', evidence_for: ['E1'], note: 'Depends on = PWR, THM, ENV, ACT' }], next: 'report', reason: 'answered' });
+  const draft = (claim: Record<string, unknown>) => JSON.stringify({ conclusion: 'HLT consolidates subsystem warnings into a single health classification and depends on PWR, THM, ENV and ACT [E1].',
+    confidence: 'high', confidence_reason: 'The SEC-03 table and paragraph state both', evidence: ['E1'], claims: [
+      { id: 'C1', text: 'HLT consolidates subsystem warnings into the health classifications', evidence: ['E1'], quote: 'HLT consolidates subsystem warnings into the canonical NOMINAL, WARNING, DEGRADED and UNKNOWN' }, claim] });
+
+  for (const [label, claim] of [
+    ['the exact quotation from the run', { id: 'C2', text: 'HLT depends on the PWR, THM, ENV, and ACT subsystems.', evidence: ['E1'], quote: 'HLT … Depends on PWR, THM, ENV, ACT' }],
+    ['a table-cell citation', { id: 'C2', text: 'HLT depends on PWR, THM, ENV and ACT', evidence: ['E1'], quote: '', cell: { row: 'HLT', column: 'Depends on', value: 'PWR, THM, ENV, ACT' } }],
+    ['a reworded quotation', { id: 'C2', text: 'HLT depends on the PWR, THM, ENV, and ACT subsystems.', evidence: ['E1'], quote: 'HLT depends on PWR, THM, ENV and ACT' }],
+  ] as const) {
+    it(`verifies the dependency claim from ${label} and answers with high confidence in one round`, async () => {
+      const model = new ScriptedModel({ title, planner: [plan], verifier: [verifier], reporter: [draft(claim)] });
+      const run = await runner(model).start(chat, user, mission, question);
+      const done = await settle(run.id);
+      expect(done.status, done.error).toBe('complete');
+      const answer = (await store.messages.list(chat.id)).find((m) => m.role === 'assistant')!;
+      const r = answer.report as { confidence: string; claims: { verdict: string; matched: string; support: string }[]; checks: { rounds: number } };
+      expect(r.claims.map((c) => c.verdict)).toEqual(['supported', 'supported']);
+      expect(r.claims[1].support).toBeTruthy();
+      expect(r.checks.rounds).toBe(1);
+      expect(r.confidence).toBe('high');
+      expect(answer.text).not.toContain('Not verified');
+      const hyp = (done.view as { hypotheses: { id: string; status: string }[] }).hypotheses;
+      expect(hyp.map((h) => h.status)).toEqual(['supported', 'supported']);           // statements mapped to H1, H2
+      expect(model.calls.filter((c) => c.role === 'verifier')).toHaveLength(1);          // no retry for the naming
+    });
+  }
+
+  it('still rejects the wrong dependency when the checker contradicts it with real text', async () => {
+    const contradict: Reply = (m) => JSON.stringify({ claims: [...m[1].content.matchAll(/^(C\d+): (.*)$/gm)].map(([, id, text]) => /DAQ/.test(text)
+      ? { id, verdict: 'contradicted', explanation: 'the row says otherwise', contradicting: [{ evidence: 'E1', quote: 'Depends on = PWR, THM, ENV, ACT' }] } : { id, verdict: 'supported', explanation: 'ok' }), next: 'rewrite' });
+    const wrong = draft({ id: 'C2', text: 'HLT depends on DAQ, COM and SUP', evidence: ['E1'], quote: 'HLT … DAQ' });
+    const model = new ScriptedModel({ title, planner: [plan], verifier: [verifier], reporter: [wrong], checker: [contradict] });
+    const run = await runner(model).start(chat, user, mission, question);
+    await settle(run.id);
+    const r = (await store.messages.list(chat.id)).find((m) => m.role === 'assistant')!.report as { confidence: string; claims: { verdict: string }[] };
+    expect(r.claims[1].verdict).toBe('contradicted');
+    expect(r.confidence).toBe('low');
   });
 });
 
