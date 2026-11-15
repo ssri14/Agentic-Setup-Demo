@@ -74,7 +74,7 @@ describe('malformed quotations', () => {
 const csvRows = (text: string) => { const [head, ...lines] = text.trim().split('\n'); const cols = head.split(','); return lines.map((l) => Object.fromEntries(l.split(',').map((v, i) => [cols[i], v]))); };
 const run10 = csvRows(readFileSync(new URL('./fixtures/brahmastra/BM-RUN-0010_telemetry.csv', import.meta.url), 'utf8'))
   .map((r) => ({ run_id: 'BM-RUN-0010', mission_elapsed_s: Number(r.mission_elapsed_s), sample_index: Number(r.sample_index), delivery_state: r.delivery_state,
-    pwr_bus_level_pu: Number(r.pwr_bus_level_pu), daq_missing_samples: Number(r.daq_missing_samples), stg_state: r.stg_state }));
+    pwr_bus_level_pu: Number(r.pwr_bus_level_pu), pwr_margin_pu: Number(r.pwr_margin_pu), thm_core_temp_pu: Number(r.thm_core_temp_pu), daq_missing_samples: Number(r.daq_missing_samples), stg_state: r.stg_state }));
 const samples = (start: number, end: number) => run10.filter((r) => r.mission_elapsed_s >= start && r.mission_elapsed_s < end);
 const events10 = readFileSync(new URL('./fixtures/brahmastra/BM-RUN-0010_events.jsonl', import.meta.url), 'utf8').trim().split('\n').map((l) => JSON.parse(l))
   .map((e) => ({ run_id: 'BM-RUN-0010', event_seq: e.event_seq, mission_elapsed_s: e.mission_elapsed_s, subsystem_id: e.subsystem_id, type: e.type, message: e.message, receipt_delay_s: 0 }));
@@ -106,7 +106,7 @@ describe('telemetry records', () => {
   it('rejects a wrong enum state and reports a time with no record', () => {
     expect(recordSupport('At 347 s stg_state was PENDING', samples(340, 350))?.status).toBe('mismatch');
     expect(recordSupport('At 347 s stg_state was CONFIRMED', samples(340, 350))?.status).toBe('match');
-    expect(recordSupport('pwr_bus_level_pu was 0.86 at 330 s', samples(320, 350), { start: 320, end: 350 })).toEqual({ status: 'absent', detail: 'no record at 330 s in this window' });
+    expect(recordSupport('pwr_bus_level_pu was 0.86 at 330 s', samples(320, 350), { start: 320, end: 350 })).toEqual({ status: 'absent', detail: 'no record at exactly 330 s in this window' });
   });
   it('leaves aggregates, absences and other runs to the other checks', () => {
     expect(at('The maximum of pwr_bus_level_pu was 0.8671')).toBeNull();
@@ -124,6 +124,69 @@ describe('event records', () => {
     expect(recordSupport('DAQ_CAPTURE_RESUMED was raised at 330 s', events10, { start: 0, end: 900 })).toMatchObject({ status: 'absent' });
     expect(recordSupport('STG raised DAQ_CAPTURE_RESUMED at 347 s', events10)?.status).toBe('mismatch');
     expect(recordSupport('DAQ reported STG_STATE_CONFIRMED at 340 s', events10)?.status).toBe('mismatch');
+  });
+});
+
+// Counterexamples from the independent review of 1.0.6 (F01-F04): formatting must not change a verdict, and a
+// plausible but wrong assertion must not be accepted.
+describe('review F01: identifier typography', () => {
+  const observed = [{ run_id: 'BM-RUN-0001', mission_elapsed_s: 100, sample_index: 200, delivery_state: 'DELIVERED', pwr_bus_level_pu: 0.856 }];
+  const variants = ['BM-RUN-0001', 'BM\u2011RUN\u20110001', 'BM\u2013RUN\u20130001', 'BM\u2212RUN\u22120001', 'bm-run-0001', 'Bm-Run-0001'];
+  it('extracts no measurement from a run id, whatever its dashes or case', () => {
+    for (const id of variants) expect(numbersIn(`At mission_elapsed_s = 100\u202Fs in run ${id}, pwr_bus_level_pu = 0.856.`), id).toEqual(['100', '0.856']);
+  });
+  it('accepts the observed claim in every variant, and rejects a wrong value in every variant', () => {
+    for (const id of variants) {
+      expect(recordSupport(`At mission_elapsed_s = 100\u202Fs in run ${id}, pwr_bus_level_pu = 0.856.`, observed), id).toMatchObject({ status: 'match' });
+      expect(recordSupport(`At mission_elapsed_s = 100 s in run ${id}, pwr_bus_level_pu = 0.865.`, observed), id)
+        .toMatchObject({ status: 'mismatch', detail: 'at 100 s the record has pwr_bus_level_pu = 0.856, not 0.865' });
+    }
+  });
+  it('still leaves a claim about another run to other checks, in any case', () => {
+    expect(recordSupport('pwr_bus_level_pu = 0.856 at 100 s in bm-run-0002', observed)).toBeNull();
+  });
+});
+
+describe('review F02: values bound to their own channels', () => {
+  const w = samples(100, 101);       // at 100 s: pwr_margin_pu 0.7485, thm_core_temp_pu 0.4567
+  it('accepts each value against its own channel', () => {
+    expect(recordSupport('At 100 s, pwr_margin_pu = 0.7485 and thm_core_temp_pu = 0.4567', w)?.status).toBe('match');
+    expect(recordSupport('At 100 s thm_core_temp_pu was 0.457 while pwr_margin_pu was 0.749', w)?.status).toBe('match');
+  });
+  it('rejects swapped values, naming the channel that differs', () => {
+    expect(recordSupport('At 100 s, pwr_margin_pu = 0.4567 and thm_core_temp_pu = 0.7485', w))
+      .toMatchObject({ status: 'mismatch', detail: 'at 100 s the record has pwr_margin_pu = 0.7485, not 0.4567; thm_core_temp_pu = 0.4567, not 0.7485' });
+    expect(recordSupport('At 100 s, pwr_margin_pu = 0.7485 and thm_core_temp_pu = 0.7485', w)?.status).toBe('mismatch');
+  });
+  it('does not guess a binding it cannot read', () => {
+    expect(recordSupport('At 100 s pwr_margin_pu and thm_core_temp_pu were 0.7485 and 0.4567 respectively', w)?.status).toBe('unparsed');
+    expect(recordSupport('At 100 s pwr_margin_pu and thm_core_temp_pu were 0.4567 and 0.7485 respectively', w)?.status).toBe('unparsed');
+    expect(recordSupport('At 100 s the value was 0.7485', w)?.status).toBe('unparsed');       // several channels, none named
+  });
+});
+
+describe('review F03: exact sample times', () => {
+  const w = samples(100, 101);       // samples at 100 and 100.5 s only
+  it('never proves a time with a sample at another time', () => {
+    expect(recordSupport('pwr_bus_level_pu was 0.8671 at exactly 101 s', w, { start: 100, end: 102 })).toEqual({ status: 'absent', detail: 'no record at exactly 101 s in this window' });
+    expect(recordSupport('pwr_bus_level_pu was 0.8671 at exactly 101 s', w)?.status).not.toBe('match');
+    expect(recordSupport('pwr_bus_level_pu was 0.8671 at 100 s', w)).toMatchObject({ status: 'mismatch', detail: 'at 100 s the record has pwr_bus_level_pu = 0.8664, not 0.8671' });
+    expect(recordSupport('pwr_bus_level_pu was 0.8671 at 100.5 s', w)?.status).toBe('match');
+  });
+});
+
+describe('review F04: event messages', () => {
+  it('accepts a quoted message only when the record carries it', () => {
+    expect(recordSupport('At 347 s DAQ raised DAQ_CAPTURE_RESUMED: "Source capture resumed; cumulative missing samples 50"', events10)?.status).toBe('match');
+    expect(recordSupport('At 347 s DAQ raised DAQ_CAPTURE_RESUMED with message "Capture halted after buffer overflow"', events10))
+      .toMatchObject({ status: 'mismatch', detail: expect.stringContaining('message "Source capture resumed; cumulative missing samples 50"') });
+  });
+  it('does not certify an unquoted description of the message', () => {
+    expect(recordSupport('At 347 s DAQ raised DAQ_CAPTURE_RESUMED with a message saying the buffer overflowed', events10)?.status).toBe('unparsed');
+  });
+  it('checks an event sequence number against the record', () => {
+    expect(recordSupport('DAQ_CAPTURE_RESUMED at 347 s was event_seq 11', events10)?.status).toBe('match');
+    expect(recordSupport('DAQ_CAPTURE_RESUMED at 347 s was event_seq 12', events10)?.status).toBe('mismatch');
   });
 });
 

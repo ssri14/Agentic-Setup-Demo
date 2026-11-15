@@ -673,6 +673,17 @@ describe('claim check on telemetry records (observed regression)', () => {
     expect(r.confidence).toBe('low');
   });
 
+  it('gives the same verdict when the model writes the run id with non-breaking hyphens or in lower case (review F01)', async () => {
+    for (const run of ['BM\u2011RUN\u20110010', 'BM\u2013RUN\u20130010', 'bm-run-0010']) {
+      const reply = JSON.stringify({ conclusion: `pwr_bus_level_pu was 0.866 pu [E1].`, confidence: 'high', confidence_reason: 'direct sample', evidence: ['E1'],
+        claims: [{ id: 'C1', text: `At mission_elapsed_s = 100\u202Fs in run ${run}, pwr_bus_level_pu = 0.866.`, evidence: ['E1'], quote: 'pwr_bus_level_pu = 0.866' }] });
+      const r = (await ask(reply)).report as { confidence: string; claims: { verdict: string; matched: string; explanation: string }[] };
+      expect(r.claims[0], run).toMatchObject({ verdict: 'supported', matched: 'record' });
+      expect(r.claims[0].explanation, run).not.toContain('0010');
+      expect(r.confidence, run).toBe('high');
+    }
+  });
+
   it('shows the models the sampled values in the evidence text', async () => {
     const model = new ScriptedModel({ title: ['{"title":"Simple Query"}'], planner: [plan], verifier: [verified], reporter: [answer('0.866', '')] });
     const run = await runner(model).start(chat, user, mission, question);

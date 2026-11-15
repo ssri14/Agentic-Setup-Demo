@@ -78,12 +78,12 @@ The answer card contains:
 - **Evidence**: the cited items, such as document passages, sections, tables, figures, telemetry windows, run summaries and analyses. Click one to open it in the side drawer. There you see the passage with its page and section, the telemetry window with a small chart, or the analysis output and chart. Items backed by data have a **Download the data** link.
 - **Claims checked**: every factual statement of the answer, with the evidence it rests on: either the exact words quoted from it, or, for a table fact, the table cell (row, column, value). Before an answer is shown, each claim is checked twice:
   - **against the source, by type of evidence**:
-    - *telemetry*: the run, the time (mission_elapsed_s), the channel and the recorded value of the sample itself; no quotation is needed;
-    - *events*: the run, the time, the subsystem and the event type of the event record;
+    - *telemetry*: the run, the exact time (mission_elapsed_s; a sample at 100.5 s never proves a claim about 101 s), and each channel with its own recorded value in that sample; no quotation is needed. The run id may be written in any case or with any dash;
+    - *events*: the run, the exact time, the subsystem, the event type, the sequence number if stated, and a message only if it is quoted in double quotes (an unquoted description of a message is left to the checker model);
     - *tables*: the row, the column and the cell value;
     - *prose*: the exact quoted words. Tables are read row by row, so a quote may not stitch words from different rows or paragraphs, and a heading that lists names never counts as a relationship. If the claim is worded differently, the line of the evidence that states it is located instead.
 
-    Every number the claim states must match the source to the precision stated (0.866 or 0.87 for a recorded 0.8664, never 0.9). A different value at the stated time is a contradiction, whatever the checker model says;
+    Every number the claim states must match the source to the precision stated (0.866 or 0.87 for a recorded 0.8664, never 0.9). A different value at the stated time is a contradiction, whatever the checker model says. When a claim lists several values in a way that cannot be tied to their channels one to one ("x and y were 0.75 and 0.46 respectively"), it is not checked mechanically: the answer is sent back to be restated as channel = value;
   - **by the checker model**: the evidence must establish the claim, and none may contradict it.
 
   Each claim gets one of these results:

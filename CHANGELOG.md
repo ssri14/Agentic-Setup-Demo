@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.0.7 — 2026-11-15
+
+Corrects the structured-record check added in 1.0.6, following an independent review that reproduced four defects in `server/src/agent/evidence.ts`. The planner, prompts, ingestion and data are unchanged.
+
+- **F01 — identifier typography (the observed false contradiction).** The 1.0.6 release did not normalise dashes before extracting numbers, so a run id written by the model with non-breaking hyphens (BM‑RUN‑0001), en dashes or in lower case left its digits behind as a "value": "at 100 s the record has pwr_bus_level_pu = 0.856, not 0001, 0.856". Claims are now normalised (NFKC, dashes, narrow spaces) before every comparison, identifiers are recognised in any case, run ids are compared case-insensitively, and an integer with leading zeros is never treated as a measurement.
+- **F02 — values bound to channels.** Each stated value is bound to the channel named before it and compared with that channel of the same record; swapped values are a contradiction naming each channel that differs. A claim whose values cannot be tied to channels one to one (e.g. "… respectively") is reported as not mechanically checkable — never supported or contradicted by the record check — and the answer is sent back to be restated as channel = value.
+- **F03 — exact times.** A stated time must equal a sample's mission_elapsed_s exactly; measurement rounding no longer applies to times.
+- **F04 — event messages.** A message quoted in double quotes must be in the event record's message; an unquoted description of a message is left to the checker model rather than certified by the record. An event sequence number is checked when stated.
+- **Reconciliation.** A record that carries every stated value is no longer shown next to a "contradicted" verdict: if the checker disputes another part of the claim, the claim is "not established" with the disagreement explained. A record match without the checker (budget exhausted, checker unavailable) is "unchecked" rather than "supported".
+- 11 new tests (98 in total): metamorphic run-id variants, the exact observed record, swapped and unbindable values, exact times, quoted and unquoted messages, event sequence numbers, and the observed query end to end with typographic run ids.
+
 ## 1.0.6 — 2026-11-15
 
 For "What was pwr_bus_level_pu in BM-RUN-0001 at exactly 100 seconds?" the agent retrieved 0.856 and the verifier and checker found it supported, but the answer showed "Citation not matched" and MEDIUM. Cause (`server/src/agent/graph.ts`, claim check): telemetry evidence was checked against text containing only the tool summary and channel statistics, never the sample records, so no claim about a recorded value could be matched; the unmatched citation then capped confidence. Event evidence had the same gap. The planner, prompts, ingestion and data are unchanged.

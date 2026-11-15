@@ -92,6 +92,7 @@ export function cellFound(cell: CellRef, content: string): string | null {
  * the checker's own "supported" verdict, never on its own.
  */
 export function locateSupport(claim: string, content: string): string | null {
+  claim = plain(claim); content = plain(content);
   const ids = identifiers(claim);
   if (ids.length < 2) return null;
   const has = (line: string, id: string) => new RegExp(`(^|[^A-Za-z0-9_])${id.replace(/[-]/g, '\\-')}([^A-Za-z0-9_]|$)`).test(line);
@@ -119,6 +120,14 @@ export function tableContent(t: { title?: string | null; section?: string | null
   const head = `[table${t.title ? ` "${t.title}"` : ''}${t.section ? `, ${t.section}` : ''}${t.page ? `, p.${t.page}` : ''}${t.source ? `, ${t.source}` : ''}] columns: ${t.columns.join(' | ')}`;
   const more = t.rows_total && t.rows_total > t.rows.length ? `\n(${t.rows_total - t.rows.length} more rows not shown)` : '';
   return [head, ...labelRows(t.columns, t.rows)].join('\n') + more;
+}
+
+/**
+ * Typographic dashes and spaces as ASCII. Models often write "BM‑RUN‑0001" with non-breaking hyphens (U+2011) and
+ * "100 s" with a narrow no-break space; every comparison below works on this form.
+ */
+export function plain(s: string): string {
+  return s.normalize('NFKC').replace(/[\u2010-\u2015\u2212\uFE58\uFE63\uFF0D]/g, '-').replace(/[\u00A0\u2007\u202F\u2009\u200A]/g, ' ');
 }
 
 /** Lower-case, unify quotes and dashes, keep letters, digits and a few joiners, collapse whitespace. */
@@ -157,6 +166,7 @@ const STOP = new Set(['THE', 'AND', 'FOR', 'NOT', 'ALL', 'ANY', 'ARE', 'BUT', 'I
 
 /** Identifiers a claim is about: subsystem codes, channel names, section/figure/run/rule IDs. */
 export function identifiers(text: string): string[] {
+  text = plain(text);
   const ids = new Set<string>();
   for (const m of text.matchAll(/\b(?:SEC|FIG|BM-RUN)-\d+\b|\bR\d{2}\b|\bP\d[A-Z]?\b|\b[A-Z][A-Z0-9]{1,5}\b|\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/g)) {
     if (!STOP.has(m[0])) ids.add(m[0]);
@@ -188,13 +198,31 @@ export function relatedLines(claim: string, items: { id: string; content: string
 
 // ---------------- numbers and structured records ----------------
 
+// Identifiers whose digits are not measurements: BM-RUN-0001 (any case, any dash once plain), SEC-03, R04, P3, E1, S2.1, p.11.
+const ID_SPAN = /\b[A-Za-z][A-Za-z0-9]*(?:-[A-Za-z0-9]+)*-\d+\b|\b[A-Za-z]+\d+(?:\.\d+)*\b|\bp\.\s?\d+\b/g;
+const blank = (m: string) => ' '.repeat(m.length);
+
+/**
+ * The claim with timestamps, identifiers and channel names blanked out, positions preserved, so that the numbers
+ * left are stated quantities and can be related to the channel names before them.
+ */
+function measurementText(text: string): string {
+  return plain(text)
+    .replace(/\b\d{4}-\d{2}-\d{2}T[\d:.]+Z?\b/g, blank)
+    .replace(ID_SPAN, blank)
+    .replace(/\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/g, blank);
+}
+
+/** Stated numbers with their positions. Integers with leading zeros (0001) are identifier digits, never values. */
+function numberSpans(text: string): { n: string; at: number }[] {
+  return [...measurementText(text).matchAll(/(?<![\w.])-?\d+(?:\.\d+)?(?![\w])/g)]
+    .filter((m) => !/^-?0\d+$/.test(m[0]))
+    .map((m) => ({ n: m[0], at: m.index! }));
+}
+
 /** Numbers stated in a claim, excluding digits that belong to identifiers, references, dates and citations. */
 export function numbersIn(text: string): string[] {
-  const stripped = text
-    .replace(/\b\d{4}-\d{2}-\d{2}T[\d:.]+Z?\b/g, ' ')                                    // timestamps
-    .replace(/\b[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)*-\d+\b|\b[A-Z]+\d+(?:\.\d+)*\b|\bp\.\s?\d+\b/g, ' ')   // BM-RUN-0001, SEC-03, R04, P3, E1, S2.1, p.11
-    .replace(/\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/g, ' ');                                  // channel names
-  return [...stripped.matchAll(/(?<![\w.])-?\d+(?:\.\d+)?(?![\w])/g)].map((m) => m[0]);
+  return numberSpans(text).map((x) => x.n);
 }
 
 /**
@@ -218,6 +246,8 @@ export function numbersSupported(claim: string, support: string): { ok: boolean;
 
 export type RecordRow = Record<string, unknown>;
 const RECORD_META = new Set(['run_id', 'sample_index', 'event_seq', 'message', 'receipt_delay_s', 'received_time_utc', 'source_time_utc']);
+/** Other ways a claim names a record field. */
+const FIELD_ALIASES: Record<string, RegExp> = { event_seq: /\b(?:event_seq|seq(?:uence)?(?:\s+(?:no\.?|number))?|event\s+#)(?![A-Za-z0-9_])/i };
 
 export const recordLine = (r: RecordRow) => `Record: ${Object.entries(r).map(([k, v]) => `${k} = ${v ?? ''}`).join('; ')}`;
 
@@ -233,53 +263,90 @@ export type RecordCheck =
   | { status: 'match'; line: string }
   | { status: 'mismatch'; line: string; detail: string }
   | { status: 'absent'; detail: string }
+  | { status: 'unparsed'; detail: string }
   | null;
 
 /**
- * Checks a claim about individual records (a telemetry sample or an event) against the records themselves:
- * run, time (mission_elapsed_s), channel or field, and value. Returns null when the claim is not about
- * single records (aggregates, absences, other runs), so other checks apply.
- *  - match: a record at the stated time carries every stated value and every named field value;
- *  - mismatch: the record at the stated time has a different value (a factual contradiction);
- *  - absent: no record at the stated time within the window.
+ * Checks a claim about individual records (a telemetry sample or an event) against the records themselves.
+ * The run and the time are keys: the time must equal a record's mission_elapsed_s exactly (no rounding).
+ * Each stated value is bound to the field named before it (pwr_margin_pu = 0.75, thm_core_temp_pu = 0.46) and
+ * compared with that field of the same record; named subsystems, event types and states must be that record's.
+ * A quoted message must be in the record's message.
+ *  - match: the record at the stated time carries every stated (field, value) pair and named value;
+ *  - mismatch: it does not (a factual contradiction);
+ *  - absent: no record at the stated time within the window;
+ *  - unparsed: the claim is about a record but its values cannot be bound to fields one to one, or it describes
+ *    a message without quoting it; neither support nor contradiction can be established mechanically;
+ *  - null: not a claim about single records (aggregates, absences, other runs): other checks apply.
  */
 export function recordSupport(claim: string, records: RecordRow[], window?: { start?: number; end?: number }): RecordCheck {
   if (!records.length) return null;
+  const full = plain(claim);
+  // Quoted text (an event message) is compared with the message only; it states no values, times or negations.
+  const quoted = [...full.matchAll(/["“]([^"“”]{4,})["”]/g)].map((m) => norm(m[1]));
+  claim = full.replace(/["“][^"“”]{4,}["”]/g, blank);
   if (/\b(no|not|missing|absent|without|gaps?|lost|dropouts?|never|none)\b/i.test(claim)) return null;
-  const runs = new Set(records.map((r) => String(r.run_id)));
-  const claimRuns = claim.match(/\b[A-Z]{2,}-RUN-\d+\b/g) ?? [];
+  const runs = new Set(records.map((r) => String(r.run_id).toUpperCase()));
+  const claimRuns = (claim.match(/\b[A-Za-z]{2,}-RUN-\d+\b/gi) ?? []).map((r) => r.toUpperCase());
   if (claimRuns.some((r) => !runs.has(r))) return null;
 
   const keys = Object.keys(records[0]);
-  const mentionedKeys = keys.filter((k) => !RECORD_META.has(k) && k !== 'mission_elapsed_s' && new RegExp(`(^|[^A-Za-z0-9_])${k}([^A-Za-z0-9_]|$)`).test(claim));
+  const fieldRe = (k: string) => FIELD_ALIASES[k] ?? new RegExp(`(^|[^A-Za-z0-9_])${k}(?![A-Za-z0-9_])`);
+  const valueKeys = keys.filter((k) => k !== 'mission_elapsed_s' && k !== 'run_id' && (!RECORD_META.has(k) || FIELD_ALIASES[k]));
+  const mentioned = valueKeys.map((k) => { const m = fieldRe(k).exec(claim); return m ? { k, at: m.index + m[0].length } : null; })
+    .filter((x): x is { k: string; at: number } => !!x).sort((a, b) => a.at - b.at);
+  const mentionedKeys = mentioned.map((x) => x.k);
   // Field values the claim names (an event type, a subsystem, an enum state): the record must carry them.
   const tokens = new Set(claim.toUpperCase().match(/[A-Z][A-Z0-9_]*/g) ?? []);
   const textFields = keys.filter((k) => !RECORD_META.has(k) && k !== 'mission_elapsed_s' && records.some((r) => typeof r[k] === 'string' && Number.isNaN(Number(r[k]))));
   const named = textFields.map((k) => ({ k, values: [...new Set(records.map((r) => String(r[k] ?? '').toUpperCase()))].filter((v) => v && tokens.has(v)) })).filter((x) => x.values.length);
 
-  // Times: numbers written as seconds, or given as mission_elapsed_s / t.
-  const times = [...claim.matchAll(/(?:mission_elapsed_s|\bt)\s*(?:=|of)\s*(-?\d+(?:\.\d+)?)|(-?\d+(?:\.\d+)?)\s*(?:s|sec|secs|seconds)\b/gi)].map((m) => m[1] ?? m[2]);
-  const counts = [...claim.matchAll(/(\d+)\s+(?:samples?|records?|events?|runs?|rows?|channels?|times)\b/gi)].map((m) => m[1]);
-  const values = numbersIn(claim).filter((n) => !times.includes(n) && !counts.includes(n));
+  // Times (written as seconds, or as mission_elapsed_s / t) and counts are not values.
+  const timeSpans = [...claim.matchAll(/(?:mission_elapsed_s|\bt)\s*(?:=|of)\s*(-?\d+(?:\.\d+)?)|(-?\d+(?:\.\d+)?)\s*(?:s|sec|secs|seconds)\b/gi)]
+    .map((m) => ({ n: m[1] ?? m[2], at: m.index! + m[0].indexOf(m[1] ?? m[2]) }));
+  const times = timeSpans.map((x) => x.n);
+  const countAt = new Set([...claim.matchAll(/(\d+)\s+(?:samples?|records?|events?|runs?|rows?|channels?|times)\b/gi)].map((m) => m.index!));
+  const values = numberSpans(claim).filter((x) => !timeSpans.some((t) => t.at === x.at) && !countAt.has(x.at));
   if (!times.length && !mentionedKeys.length && !named.length) return null;
   if (!times.length && values.length) return null;                          // a value without a time: an aggregate, not one record
 
-  const anchored = times.length ? records.filter((r) => times.some((t) => numEq(t, r.mission_elapsed_s))) : records;
+  // Bind each stated value to the field named before it; a single field takes values on either side of it.
+  const pairs: { k: string; v: string }[] = [];
+  const numericFields = valueKeys.filter((k) => records.some((r) => r[k] !== '' && r[k] !== null && Number.isFinite(Number(r[k]))));
+  for (const v of values) {
+    const before = mentioned.filter((m) => m.at <= v.at).pop();
+    const k = before?.k ?? (mentioned.length === 1 ? mentioned[0].k : !mentioned.length && numericFields.length === 1 ? numericFields[0] : null);
+    if (!k) return { status: 'unparsed', detail: `cannot tell which field ${v.n} belongs to; state each value as field = value` };
+    pairs.push({ k, v: v.n });
+  }
+  const perKey = new Map<string, number>();
+  for (const p of pairs) perKey.set(p.k, (perKey.get(p.k) ?? 0) + 1);
+  if ([...perKey.values()].some((n) => n > 1)) return { status: 'unparsed', detail: `several values follow one field name (${[...perKey].filter(([, n]) => n > 1).map(([k]) => k).join(', ')}); state each value as field = value` };
+
+  // A message: quoted text (in double quotes; apostrophes are not quotes) must be in the record's message; an unquoted description of it cannot be checked here.
+  const hasMessages = keys.includes('message');
+  if (hasMessages && !quoted.length && /\b(message|says?|said|reading|text)\b/i.test(claim)) return { status: 'unparsed', detail: 'describes the event message without quoting it' };
+
+  const anchored = times.length ? records.filter((r) => times.some((t) => Math.abs(Number(t) - Number(r.mission_elapsed_s)) < 1e-9)) : records;
   if (times.length && !anchored.length) {
     const inside = times.some((t) => (window?.start === undefined || Number(t) >= window.start) && (window?.end === undefined || Number(t) < window.end));
-    return inside ? { status: 'absent', detail: `no record at ${times.join(', ')} s in this window` } : null;
+    return inside ? { status: 'absent', detail: `no record at exactly ${times.join(', ')} s in this window` } : null;
   }
   // A named text field (stg_state, delivery_state) must carry one of the state words the claim states, if it states any.
-  const stateWords = [...tokens].filter((w) => /^[A-Z][A-Z_]{2,}$/.test(w) && !(claimRuns as string[]).includes(w) && !keys.some((k) => k.toUpperCase() === w));
+  const stateWords = [...tokens].filter((w) => /^[A-Z][A-Z_]{2,}$/.test(w) && !claimRuns.includes(w) && !keys.some((k) => k.toUpperCase() === w));
   const textMentioned = mentionedKeys.filter((k) => textFields.includes(k));
   const agrees = (r: RecordRow) => named.every(({ k, values: vs }) => vs.includes(String(r[k] ?? '').toUpperCase()))
-    && textMentioned.every((k) => !stateWords.length || stateWords.includes(String(r[k] ?? '').toUpperCase()));
-  const valueFields = (r: RecordRow) => (mentionedKeys.length ? mentionedKeys : keys.filter((k) => !RECORD_META.has(k) && k !== 'mission_elapsed_s')).map((k) => r[k]);
-  const holds = (r: RecordRow) => agrees(r) && values.every((v) => valueFields(r).some((x) => numEq(v, x)));
+    && textMentioned.every((k) => !stateWords.length || stateWords.includes(String(r[k] ?? '').toUpperCase()))
+    && (!hasMessages || quoted.every((q) => norm(String(r.message ?? '')).includes(q)));
+  const holds = (r: RecordRow) => agrees(r) && pairs.every(({ k, v }) => numEq(v, r[k]));
   const hit = anchored.find(holds);
   if (hit) return { status: 'match', line: recordLine(hit) };
   const at = anchored[0];
-  const shown = (mentionedKeys.length ? mentionedKeys : named.map((x) => x.k)).map((k) => `${k} = ${at[k]}`).join(', ');
-  const stated = [...values, ...named.flatMap((x) => x.values), ...(textMentioned.length ? stateWords : [])].filter((v, i, a) => a.indexOf(v) === i).join(', ');
-  return { status: 'mismatch', line: recordLine(at), detail: `at ${at.mission_elapsed_s} s the record has ${shown || 'other values'}${stated ? `, not ${stated}` : ''}` };
+  const wrong = [
+    ...pairs.filter(({ k, v }) => !numEq(v, at[k])).map(({ k, v }) => `${k} = ${at[k] ?? 'no value'}, not ${v}`),
+    ...named.filter(({ k, values: vs }) => !vs.includes(String(at[k] ?? '').toUpperCase())).map(({ k, values: vs }) => `${k} = ${at[k]}, not ${vs.join(' or ')}`),
+    ...textMentioned.filter((k) => stateWords.length && !stateWords.includes(String(at[k] ?? '').toUpperCase())).map((k) => `${k} = ${at[k]}, not ${stateWords.join(' or ')}`),
+    ...(hasMessages && quoted.some((q) => !norm(String(at.message ?? '')).includes(q)) ? [`message "${at.message}"`] : []),
+  ];
+  return { status: 'mismatch', line: recordLine(at), detail: `at ${at.mission_elapsed_s} s the record has ${wrong.join('; ') || 'other values'}` };
 }

@@ -1,4 +1,4 @@
-# Mission Analysis stack. Images are published as ${IMAGE_NAMESPACE:-ssri14}/mission-analysis-*:${IMAGE_TAG:-1.0.6}.
+# Mission Analysis stack. Images are published as ${IMAGE_NAMESPACE:-ssri14}/mission-analysis-*:${IMAGE_TAG:-1.0.7}.
 #   Use the published images:  docker compose pull            (then docker compose up -d …)
 #   Build from this checkout:    docker compose build
 # See ../docs/01-infrastructure.md.
@@ -46,7 +46,7 @@ services:
     restart: unless-stopped
   ingest:
     build: .
-    image: ${IMAGE_NAMESPACE:-ssri14}/mission-analysis-ingestion:${IMAGE_TAG:-1.0.6}
+    image: ${IMAGE_NAMESPACE:-ssri14}/mission-analysis-ingestion:${IMAGE_TAG:-1.0.7}
     profiles: [cli]
     env_file: .env
     environment:
@@ -72,7 +72,7 @@ services:
     command: [--help]
   # Ingestion dashboard: service health, missions, PDF upload and ingestion jobs.
   dashboard:
-    image: ${IMAGE_NAMESPACE:-ssri14}/mission-analysis-ingestion:${IMAGE_TAG:-1.0.6}
+    image: ${IMAGE_NAMESPACE:-ssri14}/mission-analysis-ingestion:${IMAGE_TAG:-1.0.7}
     build: .
     entrypoint: [python, -m, ingestion.dashboard]
     env_file: .env
@@ -101,7 +101,7 @@ services:
     restart: unless-stopped
   # Mission Analysis Agent web app (../mission-analysis-agent): http://localhost:8095
   agent-web:
-    image: ${IMAGE_NAMESPACE:-ssri14}/mission-analysis-agent:${IMAGE_TAG:-1.0.6}
+    image: ${IMAGE_NAMESPACE:-ssri14}/mission-analysis-agent:${IMAGE_TAG:-1.0.7}
     build: ../mission-analysis-agent
     environment:
       MONGO_HOST: mongo
@@ -140,7 +140,7 @@ services:
     restart: unless-stopped
   # Runs model-written analysis code. Only reachable on the internal sandbox network, which has no route out.
   analysis-sandbox:
-    image: ${IMAGE_NAMESPACE:-ssri14}/mission-analysis-sandbox:${IMAGE_TAG:-1.0.6}
+    image: ${IMAGE_NAMESPACE:-ssri14}/mission-analysis-sandbox:${IMAGE_TAG:-1.0.7}
     build: ../mission-analysis-agent/sandbox
     networks: [sandbox]
     read_only: true
@@ -152,7 +152,7 @@ services:
     restart: unless-stopped
   # One-time: creates the least-privilege MongoDB user the agent app connects as.
   agent-provision:
-    image: ${IMAGE_NAMESPACE:-ssri14}/mission-analysis-agent:${IMAGE_TAG:-1.0.6}
+    image: ${IMAGE_NAMESPACE:-ssri14}/mission-analysis-agent:${IMAGE_TAG:-1.0.7}
     build: ../mission-analysis-agent
     profiles: [setup]
     entrypoint: [node, dist/server/provision.js]

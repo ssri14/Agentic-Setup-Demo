@@ -2,7 +2,7 @@
 
 A web application for investigating a mission's documents and telemetry with an agent that plans, executes, verifies, recovers and replans, and whose every answer can be replayed. User and administrator guides: [`../docs/05-users.md`](../docs/05-users.md), [`../docs/04-administrators.md`](../docs/04-administrators.md). This README is the technical reference.
 
-**Version 1.0.6.**
+**Version 1.0.7.**
 
 | Works now | Arrives later |
 |---|---|

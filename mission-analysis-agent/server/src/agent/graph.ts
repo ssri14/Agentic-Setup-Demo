@@ -26,7 +26,7 @@ import type { Sources } from '../tools/sources.js';
 import { trim } from '../tools/util.js';
 import type { EventSink } from './events.js';
 import { completeJson, type ChatMessage, type ChatModel, type ModelRole } from './llm.js';
-import { MAX_CONTENT, identifiers, cellFound, labelTables, locateSupport, numbersSupported, quoteFound, recordSupport, recordsContent, relatedLines, tableContent, type RecordRow } from './evidence.js';
+import { MAX_CONTENT, identifiers, plain, cellFound, labelTables, locateSupport, numbersSupported, quoteFound, recordSupport, recordsContent, relatedLines, tableContent, type RecordRow } from './evidence.js';
 import { analystMessages, checkerMessages, missionBlock, plannerMessages, recoveryMessages, reporterMessages, toolCatalog, verifierMessages, type MissionContext } from './prompts.js';
 import { AnalystOutput, CheckOutput, PlanOutput, ReportOutput, TASK_REF, VerifyOutput, planSchema, recoverSchema, taskRefs, type Claim, type ReportOutput as ReportValue } from './schemas.js';
 
@@ -669,7 +669,7 @@ export function buildAgent(ctx: AgentContext) {
 
     // 1. Deterministic: find the claim's support in the cited evidence text, by exact quote, by table cell,
     //    or (when the wording differs) by locating the row or sentence that carries all its identifiers.
-    type Det = { cited: string[]; matched: SupportMatch; in: string | null; support: string | null; mismatch?: { evidence: string; line: string; detail: string }; absent?: string; numbers?: string[] };
+    type Det = { cited: string[]; matched: SupportMatch; in: string | null; support: string | null; mismatch?: { evidence: string; line: string; detail: string }; absent?: string; unparsed?: string; numbers?: string[] };
     const det = draft.claims.map((c): Det => {
       const cited = c.evidence.filter((id) => pool.has(id));
       // Structured records (telemetry samples, events): run, time, channel or field, and value; no quotation needed.
@@ -680,6 +680,8 @@ export function buildAgent(ctx: AgentContext) {
         if (r?.status === 'match') return { cited, matched: 'record', in: id, support: r.line };
         if (r?.status === 'mismatch') return { cited, matched: null, in: null, support: null, mismatch: { evidence: id, line: r.line, detail: r.detail } };
         if (r?.status === 'absent') return { cited, matched: null, in: null, support: null, absent: `${id}: ${r.detail}` };
+        // About a record, but not mechanically checkable: no text match may stand in for the record check.
+        if (r?.status === 'unparsed') return { cited, matched: null, in: null, support: null, unparsed: `${id}: ${r.detail}` };
       }
       // Text: an exact quote or table cell, and every number the claim states must be in that support.
       for (const id of cited) {
@@ -695,7 +697,7 @@ export function buildAgent(ctx: AgentContext) {
         if (line && numbersSupported(c.text, line).ok) return { cited, matched: 'located', in: id, support: line };
       }
       // Nothing matched: are the claim's stated numbers and identifiers in the cited evidence at all?
-      const all = cited.map(contentOf).join('\n');
+      const all = plain(cited.map(contentOf).join('\n'));
       const missing = [...numbersSupported(c.text, all).missing,
         ...identifiers(c.text).filter((id) => !new RegExp(`(^|[^A-Za-z0-9_])${id.replace(/-/g, '\\-')}([^A-Za-z0-9_]|$)`).test(all))];
       return { cited, matched: null, in: null, support: null, numbers: missing };
@@ -710,7 +712,7 @@ export function buildAgent(ctx: AgentContext) {
         const d = det[i];
         const cited = c.cell ? `cell: row "${c.cell.row}", column "${c.cell.column}", value "${c.cell.value}"` : `quote: "${c.quote}"`;
         const status = !d.cited.length ? 'cites no evidence from this run'
-          : d.matched === 'record' ? `record found in ${d.in}: ${d.support}` : d.mismatch ? `RECORD DIFFERS in ${d.mismatch.evidence}: ${d.mismatch.detail}` : d.absent ? `NO RECORD: ${d.absent}`
+          : d.matched === 'record' ? `record found in ${d.in}: ${d.support}` : d.mismatch ? `RECORD DIFFERS in ${d.mismatch.evidence}: ${d.mismatch.detail}` : d.absent ? `NO RECORD: ${d.absent}` : d.unparsed ? `RECORD CHECK NOT POSSIBLE: ${d.unparsed}`
           : d.matched === 'quote' ? `quote found in ${d.in}` : d.matched === 'cell' ? `cell found in ${d.in}: ${d.support}`
           : d.matched === 'located' ? `exact wording not found; the line of ${d.in} that mentions all its identifiers is: ${d.support}` : `SUPPORT NOT FOUND in ${d.cited.join(', ')}`;
         const related = relatedLines(c.text, items);
@@ -739,7 +741,15 @@ export function buildAgent(ctx: AgentContext) {
       // Structured records decide on their own: a different recorded value is a contradiction whatever the checker says.
       if (d.mismatch) { verdict = 'contradicted'; explanation = `${d.mismatch.detail}${explanation ? `; checker: ${explanation}` : ''}`; contradicting.unshift({ evidence: d.mismatch.evidence, quote: d.mismatch.line }); }
       else if (d.absent) { verdict = 'insufficient'; explanation = d.absent; }
-      else if (d.matched === 'record' && m?.verdict !== 'contradicted') { verdict = 'supported'; explanation = explanation || 'the record states it'; }
+      else if (d.matched === 'record' && m?.verdict !== 'contradicted') { verdict = m ? 'supported' : 'unchecked'; explanation = explanation || 'the record states it'; }
+      // The record carries every stated value, yet the checker disputes the claim: report the disagreement, never "contradicted"
+      // next to a record that matches.
+      else if (d.matched === 'record') { verdict = 'insufficient'; explanation = `the record ${d.in} carries the stated values (${d.support}), but the checker disputes another part of the claim: ${explanation}`; }
+      else if (d.unparsed) {
+        if (m?.verdict === 'contradicted' && contradicting.length) verdict = 'contradicted';
+        else if (m?.verdict === 'supported') { verdict = 'validation_error'; explanation = `the checker found it supported, but it could not be checked against the record (${d.unparsed})${explanation ? `; ${explanation}` : ''}`; }
+        else { verdict = 'insufficient'; explanation = `${d.unparsed}${explanation ? `; checker: ${explanation}` : ''}`; }
+      }
       else if (m?.verdict === 'contradicted' && contradicting.length) verdict = 'contradicted';
       else if (d.numbers?.length && m?.verdict !== 'contradicted') { verdict = 'insufficient'; explanation = `${d.numbers.join(', ')} ${d.numbers.length > 1 ? 'do' : 'does'} not appear in ${d.cited.join(', ')}${explanation ? `; checker: ${explanation}` : ''}`; }
       else if (!d.cited.length) { verdict = 'insufficient'; explanation = `cites no evidence gathered in this run${explanation ? `; ${explanation}` : ''}`; }
@@ -763,7 +773,7 @@ export function buildAgent(ctx: AgentContext) {
 
     // 4. Send problems back while rounds and budgets allow.
     if (bad.length && round < 3 && !limit) {
-      const problems = bad.map((r) => `${r.id} "${r.text}" — ${r.verdict.replace('_', ' ')}: ${r.explanation}${r.contradicting.length ? ` The evidence says: ${r.contradicting.map((x) => `${x.evidence} "${x.quote}"`).join('; ')}` : ''}${r.verdict === 'validation_error' ? ' Fix the citation: quote one contiguous span exactly as written, or for a table fact give "cell": {"row", "column", "value"}.' : ''}`).join('\n') + (model?.guidance ? `\nChecker guidance: ${model.guidance}` : '');
+      const problems = bad.map((r) => `${r.id} "${r.text}" — ${r.verdict.replace('_', ' ')}: ${r.explanation}${r.contradicting.length ? ` The evidence says: ${r.contradicting.map((x) => `${x.evidence} "${x.quote}"`).join('; ')}` : ''}${r.verdict === 'validation_error' && /field = value/.test(r.explanation) ? ' Restate it as field = value at mission_elapsed_s = t, one value per field.' : r.verdict === 'validation_error' ? ' Fix the citation: quote one contiguous span exactly as written, or for a table fact give "cell": {"row", "column", "value"}.' : ''}`).join('\n') + (model?.guidance ? `\nChecker guidance: ${model.guidance}` : '');
       const investigate = model?.next === 'investigate' && counters.revisions < ctx.budgets.maxRevisions && bad.some((r) => r.verdict !== 'validation_error');
       const route: Route = investigate ? 'plan' : 'report';
       const reason = `Claim check found ${bad.length} problem(s) in the draft answer:\n${problems}`;
