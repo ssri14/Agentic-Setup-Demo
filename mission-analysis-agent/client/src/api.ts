@@ -41,13 +41,15 @@ export interface Report {
   rejected_alternatives: { hypothesis: string; reason: string }[]; uncertainties: string[]; limits: string[];
   /** Failed or abandoned steps (1.0.5+); they do not lower confidence when the claims are verified. */
   workflow?: string[];
+  /** Citations whose wording did not match the source although the facts are there (1.0.6+); reported, not a confidence cap. */
+  provenance?: string[];
   claims?: CheckedClaim[]; checks?: { rounds: number; checker: 'ok' | 'failed' | 'skipped'; supported: number; total: number };
 }
 /** 'unsupported' appears in answers saved by 1.0.2–1.0.3 and means 'insufficient'. */
 export type ClaimVerdict = 'supported' | 'contradicted' | 'insufficient' | 'validation_error' | 'unchecked' | 'unsupported';
 export interface CheckedClaim { id: string; text: string; evidence: string[]; quote: string; cell?: { row: string; column: string; value: string } | null; verdict: ClaimVerdict;
   matched?: 'quote' | 'cell' | 'located' | null; support?: string | null; quote_found: boolean; explanation: string; contradicting: { evidence: string; quote: string }[] }
-export const VERDICT_LABEL: Record<ClaimVerdict, string> = { supported: 'supported', contradicted: 'contradicted', insufficient: 'not established', unsupported: 'not established', validation_error: 'citation not matched', unchecked: 'not cross-checked' };
+export const VERDICT_LABEL: Record<ClaimVerdict, string> = { supported: 'supported', contradicted: 'contradicted', insufficient: 'not established', unsupported: 'not established', validation_error: 'citation wording differs', unchecked: 'not cross-checked' };
 export const verdictMark = (v: ClaimVerdict) => (v === 'supported' ? '✓' : v === 'validation_error' || v === 'unchecked' ? '?' : '✗');
 /** How a claim cites its evidence, for display. */
 export const citationText = (c: CheckedClaim) => (c.cell ? `${c.cell.row} · ${c.cell.column} = ${c.cell.value}` : c.quote ? `“${c.quote}”` : '');

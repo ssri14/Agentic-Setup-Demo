@@ -410,20 +410,32 @@ describe('claim check (document evidence interpretation)', () => {
     expect(answer.text).toMatch(/Not verified against the evidence:\*\* HLT depends on DAQ, COM and SUP \(contradicted by E\d+\)/);
   });
 
-  it('reports a quote that cannot be matched as a citation problem, not as a verified or contradicted claim', async () => {
+  it('reports a mis-worded quotation as a provenance note, without lowering confidence, when the facts are in the evidence', async () => {
+    const reworded: Reply = (m) => { const row = idWith(m[1].content, 'Depends on = PWR, THM, ENV, ACT');
+      return JSON.stringify({ conclusion: `HLT depends on PWR, THM, ENV and ACT [${row}].`, confidence: 'high', confidence_reason: 'from the table', evidence: [row],
+        claims: [{ id: 'C1', text: 'The dependency list is given for HLT', evidence: [row], quote: 'HLT relies on four subsystems' }] }); };
+    const model = new ScriptedModel({ title: ['{"title":"HLT"}'], planner: [hltPlan], verifier: [verified], reporter: [reworded] });   // checker: supported
+    const run = await runner(model).start(chat, user, mission, question);
+    expect((await settle(run.id)).status).toBe('complete');
+    const answer = (await store.messages.list(chat.id)).find((m) => m.role === 'assistant')!;
+    const r = answer.report as { confidence: string; provenance: string[]; claims: { verdict: string }[]; uncertainties: string[] };
+    expect(r.claims[0].verdict).toBe('validation_error');
+    expect(r.confidence).toBe('high');                                     // confidence follows the factual verdicts
+    expect(r.provenance).toEqual([expect.stringContaining('C1 "The dependency list is given for HLT": the checker found it supported by E')]);
+    expect(answer.text).not.toContain('Citation not matched');
+    expect(r.uncertainties).toEqual([]);
+  });
+
+  it('treats a claim whose names are not in the cited evidence as not established, whatever the checker says', async () => {
     const invented: Reply = (m) => { const row = idWith(m[1].content, 'Depends on = PWR, THM, ENV, ACT');
-      return JSON.stringify({ conclusion: `HLT depends on CLK [${row}].`, confidence: 'high', confidence_reason: 'from the table', evidence: [row],
-        claims: [{ id: 'C1', text: 'HLT depends on CLK', evidence: [row], quote: 'HLT depends on CLK' }] }); };
-    const model = new ScriptedModel({ title: ['{"title":"HLT purpose and dependencies"}'], planner: [hltPlan], verifier: [verified], reporter: [invented] });   // default checker accepts everything
+      return JSON.stringify({ conclusion: `HLT depends on GNC [${row}].`, confidence: 'high', confidence_reason: 'from the table', evidence: [row],
+        claims: [{ id: 'C1', text: 'HLT depends on GNC', evidence: [row], quote: 'HLT depends on GNC' }] }); };
+    const model = new ScriptedModel({ title: ['{"title":"HLT"}'], planner: [hltPlan], verifier: [verified], reporter: [invented] });
     const run = await runner(model).start(chat, user, mission, question);
     expect((await settle(run.id)).status).toBe('complete');
     const first = (await store.events.list(run.id)).find((e) => e.type === 'claim_check')!.payload as { claims: { verdict: string; explanation: string }[] };
-    expect(first.claims[0]).toMatchObject({ verdict: 'validation_error', matched: null, explanation: expect.stringContaining('could not be matched to') });
-    const answer = (await store.messages.list(chat.id)).find((m) => m.role === 'assistant')!;
-    const r = answer.report as { confidence: string; confidence_reason: string };
-    expect(r.confidence).toBe('medium');                                  // explained, never silently lowered
-    expect(r.confidence_reason).toMatch(/judged supported by the checker, but the cited text could not be matched/);
-    expect(answer.text).toContain('**Citation not matched:** HLT depends on CLK');
+    expect(first.claims[0]).toMatchObject({ verdict: 'insufficient', explanation: expect.stringContaining('GNC does not appear in') });
+    expect(((await store.messages.list(chat.id)).find((m) => m.role === 'assistant')!.report as { confidence: string }).confidence).toBe('low');
   });
 
   it('ignores a contradiction whose quote is not in the evidence', async () => {
@@ -627,5 +639,44 @@ describe('answer confidence versus workflow failures', () => {
     expect(r.confidence).toBe('high');
     expect(r.limits).toEqual([]);
     expect(r.workflow).toEqual([expect.stringMatching(/^S1.2 events_window: injected fault: events_window timed out.*the investigation stopped there: the table already answers the question$/)]);
+  });
+});
+
+describe('claim check on telemetry records (observed regression)', () => {
+  const question = 'What was the value of pwr_bus_level_pu in mission run BM-RUN-0010 at exactly 100 seconds?';
+  const plan = JSON.stringify({ objective: 'Value of pwr_bus_level_pu at 100 s in BM-RUN-0010', hypotheses: [{ id: 'H1', statement: 'The BM-RUN-0010 window has a pwr_bus_level_pu sample at 100 s' }],
+    steps: [{ id: 'S1', title: 'Samples around 100 s', tasks: [{ id: 'S1.1', tool: 'telemetry_window', args: { run_id: 'BM-RUN-0010', channels: ['pwr_bus_level_pu'], start: 100, end: 101 }, purpose: 'samples' }] }] });
+  const verified = JSON.stringify({ verdicts: [{ hypothesis: 'H1', status: 'supported', confidence: 'high', evidence_for: ['E1'], note: 'sample at 100 s' }], next: 'report', reason: 'answered' });
+  const answer = (value: string, quote: string) => JSON.stringify({ conclusion: `At 100 s in BM-RUN-0010, pwr_bus_level_pu was ${value} pu [E1].`, confidence: 'high', confidence_reason: 'direct sample', evidence: ['E1'],
+    claims: [{ id: 'C1', text: `pwr_bus_level_pu = ${value} pu at mission_elapsed_s = 100 in run BM-RUN-0010`, evidence: ['E1'], quote }] });
+  const ask = async (reply: string) => {
+    const model = new ScriptedModel({ title: ['{"title":"Simple Query"}'], planner: [plan], verifier: [verified], reporter: [reply] });   // checker: supported
+    const run = await runner(model).start(chat, user, mission, question);
+    expect((await settle(run.id)).status).toBe('complete');
+    return (await store.messages.list(chat.id)).find((m) => m.role === 'assistant')!;
+  };
+
+  it('verifies the recorded value from the sample itself, whatever the quotation looks like, and keeps high confidence', async () => {
+    const msg = await ask(answer('0.866', 'pwr_bus_level_pu: 0.866 (100 s)'));
+    const r = msg.report as { confidence: string; claims: { verdict: string; matched: string; support: string }[]; provenance: string[] };
+    expect(r.claims[0]).toMatchObject({ verdict: 'supported', matched: 'record', support: expect.stringContaining('mission_elapsed_s = 100; sample_index = 200; delivery_state = DELIVERED; pwr_bus_level_pu = 0.8664') });
+    expect(r.confidence).toBe('high');
+    expect(r.provenance).toEqual([]);
+    expect(msg.text).not.toContain('Citation not matched');
+  });
+
+  it('never accepts a wrong value because it cites the right evidence, even when the checker says supported', async () => {
+    const msg = await ask(answer('0.856', 'pwr_bus_level_pu: 0.856 (100 s)'));
+    const r = msg.report as { confidence: string; claims: { verdict: string; explanation: string; contradicting: { evidence: string; quote: string }[] }[] };
+    expect(r.claims[0]).toMatchObject({ verdict: 'contradicted', explanation: expect.stringContaining('at 100 s the record has pwr_bus_level_pu = 0.8664, not 0.856') });
+    expect(r.claims[0].contradicting[0]).toMatchObject({ evidence: 'E1', quote: expect.stringContaining('pwr_bus_level_pu = 0.8664') });
+    expect(r.confidence).toBe('low');
+  });
+
+  it('shows the models the sampled values in the evidence text', async () => {
+    const model = new ScriptedModel({ title: ['{"title":"Simple Query"}'], planner: [plan], verifier: [verified], reporter: [answer('0.866', '')] });
+    const run = await runner(model).start(chat, user, mission, question);
+    await settle(run.id);
+    expect(model.calls.find((c) => c.role === 'verifier')!.messages[1].content).toContain('Record: run_id = BM-RUN-0010; mission_elapsed_s = 100; sample_index = 200; delivery_state = DELIVERED; pwr_bus_level_pu = 0.8664');
   });
 });

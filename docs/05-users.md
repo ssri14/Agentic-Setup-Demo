@@ -77,7 +77,13 @@ The answer card contains:
 - **Confidence**, *high*, *medium* or *low*, with the reason.
 - **Evidence**: the cited items, such as document passages, sections, tables, figures, telemetry windows, run summaries and analyses. Click one to open it in the side drawer. There you see the passage with its page and section, the telemetry window with a small chart, or the analysis output and chart. Items backed by data have a **Download the data** link.
 - **Claims checked**: every factual statement of the answer, with the evidence it rests on: either the exact words quoted from it, or, for a table fact, the table cell (row, column, value). Before an answer is shown, each claim is checked twice:
-  - **in the text**: the quote, or the cell, must really be in the cited evidence. Tables are read row by row, so a quote may not stitch words from different rows or paragraphs, and a heading that lists names never counts as a relationship. If the claim is worded differently, the line of the evidence that states it is located instead;
+  - **against the source, by type of evidence**:
+    - *telemetry*: the run, the time (mission_elapsed_s), the channel and the recorded value of the sample itself; no quotation is needed;
+    - *events*: the run, the time, the subsystem and the event type of the event record;
+    - *tables*: the row, the column and the cell value;
+    - *prose*: the exact quoted words. Tables are read row by row, so a quote may not stitch words from different rows or paragraphs, and a heading that lists names never counts as a relationship. If the claim is worded differently, the line of the evidence that states it is located instead.
+
+    Every number the claim states must match the source to the precision stated (0.866 or 0.87 for a recorded 0.8664, never 0.9). A different value at the stated time is a contradiction, whatever the checker model says;
   - **by the checker model**: the evidence must establish the claim, and none may contradict it.
 
   Each claim gets one of these results:
@@ -87,7 +93,7 @@ The answer card contains:
   | ✓ | supported | The evidence establishes the claim, and the supporting text was found | none |
   | ✗ | contradicted | Some evidence states something incompatible (its words are shown) | lowered to low |
   | ✗ | not established | Nothing in the cited evidence states the claim | lowered to low |
-  | ? | citation not matched | The checker judged the claim supported, but its quotation could not be located in the cited text: a citation problem, not a factual one | at most medium, with the claim named |
+  | ? | citation wording differs | The checker found the claim supported and its values and names are in the cited evidence, but the quotation is not worded as in the source: a provenance note, not a factual problem | none; listed under **Citation notes** |
 
   A claim that is not ✓ sends the answer back to be rewritten (or, when evidence is missing, back to planning), up to two times. Claims that still fail are listed at the end of the conclusion, and the confidence reason says exactly why it was lowered.
 - **Rejected alternatives**: hypotheses the evidence ruled out, and why.

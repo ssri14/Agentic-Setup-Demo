@@ -185,3 +185,101 @@ export function relatedLines(claim: string, items: { id: string; content: string
   }
   return scored.sort((a, b) => b.score - a.score).slice(0, max).map((x) => x.line);
 }
+
+// ---------------- numbers and structured records ----------------
+
+/** Numbers stated in a claim, excluding digits that belong to identifiers, references, dates and citations. */
+export function numbersIn(text: string): string[] {
+  const stripped = text
+    .replace(/\b\d{4}-\d{2}-\d{2}T[\d:.]+Z?\b/g, ' ')                                    // timestamps
+    .replace(/\b[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)*-\d+\b|\b[A-Z]+\d+(?:\.\d+)*\b|\bp\.\s?\d+\b/g, ' ')   // BM-RUN-0001, SEC-03, R04, P3, E1, S2.1, p.11
+    .replace(/\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/g, ' ');                                  // channel names
+  return [...stripped.matchAll(/(?<![\w.])-?\d+(?:\.\d+)?(?![\w])/g)].map((m) => m[0]);
+}
+
+/**
+ * A stated number equals a recorded value when it is the recorded value rounded to the stated precision
+ * and within 0.5 % of it: 0.866 and 0.87 for 0.8664, but not 0.9.
+ */
+export function numEq(stated: string, recorded: unknown): boolean {
+  const a = Number(stated), b = Number(recorded);
+  if (!Number.isFinite(a) || !Number.isFinite(b) || recorded === '' || recorded === null) return false;
+  if (Math.abs(a - b) < 1e-9) return true;
+  const decimals = stated.includes('.') ? stated.split('.')[1].length : 0;
+  return Math.abs(Number(b.toFixed(decimals)) - a) < 1e-9 && Math.abs(a - b) <= 0.005 * Math.abs(b);
+}
+
+/** Every number the claim states appears in the text (to the claim's precision). */
+export function numbersSupported(claim: string, support: string): { ok: boolean; missing: string[] } {
+  const have = numbersIn(support);
+  const missing = numbersIn(claim).filter((n) => !have.some((h) => numEq(n, h)));
+  return { ok: !missing.length, missing };
+}
+
+export type RecordRow = Record<string, unknown>;
+const RECORD_META = new Set(['run_id', 'sample_index', 'event_seq', 'message', 'receipt_delay_s', 'received_time_utc', 'source_time_utc']);
+
+export const recordLine = (r: RecordRow) => `Record: ${Object.entries(r).map(([k, v]) => `${k} = ${v ?? ''}`).join('; ')}`;
+
+/** Telemetry or event records as labelled lines for the models, first and last ones if there are many. */
+export function recordsContent(header: string, records: RecordRow[], max = 60): string {
+  const shown = records.length > max ? [...records.slice(0, max / 2), ...records.slice(-max / 2)] : records;
+  const lines = shown.map(recordLine);
+  if (records.length > max) lines.splice(max / 2, 0, `(${records.length - max} records not shown)`);
+  return [header, ...lines].join('\n');
+}
+
+export type RecordCheck =
+  | { status: 'match'; line: string }
+  | { status: 'mismatch'; line: string; detail: string }
+  | { status: 'absent'; detail: string }
+  | null;
+
+/**
+ * Checks a claim about individual records (a telemetry sample or an event) against the records themselves:
+ * run, time (mission_elapsed_s), channel or field, and value. Returns null when the claim is not about
+ * single records (aggregates, absences, other runs), so other checks apply.
+ *  - match: a record at the stated time carries every stated value and every named field value;
+ *  - mismatch: the record at the stated time has a different value (a factual contradiction);
+ *  - absent: no record at the stated time within the window.
+ */
+export function recordSupport(claim: string, records: RecordRow[], window?: { start?: number; end?: number }): RecordCheck {
+  if (!records.length) return null;
+  if (/\b(no|not|missing|absent|without|gaps?|lost|dropouts?|never|none)\b/i.test(claim)) return null;
+  const runs = new Set(records.map((r) => String(r.run_id)));
+  const claimRuns = claim.match(/\b[A-Z]{2,}-RUN-\d+\b/g) ?? [];
+  if (claimRuns.some((r) => !runs.has(r))) return null;
+
+  const keys = Object.keys(records[0]);
+  const mentionedKeys = keys.filter((k) => !RECORD_META.has(k) && k !== 'mission_elapsed_s' && new RegExp(`(^|[^A-Za-z0-9_])${k}([^A-Za-z0-9_]|$)`).test(claim));
+  // Field values the claim names (an event type, a subsystem, an enum state): the record must carry them.
+  const tokens = new Set(claim.toUpperCase().match(/[A-Z][A-Z0-9_]*/g) ?? []);
+  const textFields = keys.filter((k) => !RECORD_META.has(k) && k !== 'mission_elapsed_s' && records.some((r) => typeof r[k] === 'string' && Number.isNaN(Number(r[k]))));
+  const named = textFields.map((k) => ({ k, values: [...new Set(records.map((r) => String(r[k] ?? '').toUpperCase()))].filter((v) => v && tokens.has(v)) })).filter((x) => x.values.length);
+
+  // Times: numbers written as seconds, or given as mission_elapsed_s / t.
+  const times = [...claim.matchAll(/(?:mission_elapsed_s|\bt)\s*(?:=|of)\s*(-?\d+(?:\.\d+)?)|(-?\d+(?:\.\d+)?)\s*(?:s|sec|secs|seconds)\b/gi)].map((m) => m[1] ?? m[2]);
+  const counts = [...claim.matchAll(/(\d+)\s+(?:samples?|records?|events?|runs?|rows?|channels?|times)\b/gi)].map((m) => m[1]);
+  const values = numbersIn(claim).filter((n) => !times.includes(n) && !counts.includes(n));
+  if (!times.length && !mentionedKeys.length && !named.length) return null;
+  if (!times.length && values.length) return null;                          // a value without a time: an aggregate, not one record
+
+  const anchored = times.length ? records.filter((r) => times.some((t) => numEq(t, r.mission_elapsed_s))) : records;
+  if (times.length && !anchored.length) {
+    const inside = times.some((t) => (window?.start === undefined || Number(t) >= window.start) && (window?.end === undefined || Number(t) < window.end));
+    return inside ? { status: 'absent', detail: `no record at ${times.join(', ')} s in this window` } : null;
+  }
+  // A named text field (stg_state, delivery_state) must carry one of the state words the claim states, if it states any.
+  const stateWords = [...tokens].filter((w) => /^[A-Z][A-Z_]{2,}$/.test(w) && !(claimRuns as string[]).includes(w) && !keys.some((k) => k.toUpperCase() === w));
+  const textMentioned = mentionedKeys.filter((k) => textFields.includes(k));
+  const agrees = (r: RecordRow) => named.every(({ k, values: vs }) => vs.includes(String(r[k] ?? '').toUpperCase()))
+    && textMentioned.every((k) => !stateWords.length || stateWords.includes(String(r[k] ?? '').toUpperCase()));
+  const valueFields = (r: RecordRow) => (mentionedKeys.length ? mentionedKeys : keys.filter((k) => !RECORD_META.has(k) && k !== 'mission_elapsed_s')).map((k) => r[k]);
+  const holds = (r: RecordRow) => agrees(r) && values.every((v) => valueFields(r).some((x) => numEq(v, x)));
+  const hit = anchored.find(holds);
+  if (hit) return { status: 'match', line: recordLine(hit) };
+  const at = anchored[0];
+  const shown = (mentionedKeys.length ? mentionedKeys : named.map((x) => x.k)).map((k) => `${k} = ${at[k]}`).join(', ');
+  const stated = [...values, ...named.flatMap((x) => x.values), ...(textMentioned.length ? stateWords : [])].filter((v, i, a) => a.indexOf(v) === i).join(', ');
+  return { status: 'mismatch', line: recordLine(at), detail: `at ${at.mission_elapsed_s} s the record has ${shown || 'other values'}${stated ? `, not ${stated}` : ''}` };
+}

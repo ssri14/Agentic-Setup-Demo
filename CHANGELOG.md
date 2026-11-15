@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.6 — 2026-11-15
+
+For "What was pwr_bus_level_pu in BM-RUN-0001 at exactly 100 seconds?" the agent retrieved 0.856 and the verifier and checker found it supported, but the answer showed "Citation not matched" and MEDIUM. Cause (`server/src/agent/graph.ts`, claim check): telemetry evidence was checked against text containing only the tool summary and channel statistics, never the sample records, so no claim about a recorded value could be matched; the unmatched citation then capped confidence. Event evidence had the same gap. The planner, prompts, ingestion and data are unchanged.
+
+- **Evidence-type-aware validation.** `telemetry_window` and `events_window` now attach the records behind their evidence (kept out of tool data, observations and stored reports). Claims citing them are checked against the records: run, time, channel or field and value for telemetry; run, time, subsystem and type for events. No quotation is required. Tables keep row/column/value checks; prose keeps exact quotations. Models also see the sampled values in the evidence text.
+- **Wrong values are never accepted.** A different recorded value (or enum state, subsystem, event type) at the stated time is a deterministic contradiction, whatever the checker says. Every number in a claim must match its support to the stated precision and within 0.5 % (0.866 or 0.87 for 0.8664, not 0.9). A claim whose numbers or names do not appear in its cited evidence is "not established".
+- **Formatting versus facts.** A citation whose wording differs while the facts are in the cited evidence and the checker found it supported is reported under *Citation notes*; it no longer lowers confidence or adds a note to the conclusion. Contradicted and unestablished claims still lower confidence to low.
+- 13 new tests (87 in total): valid and invalid claims for prose, tables, telemetry samples and events on the real BM-RUN-0010 records and SEC-03 text, and the observed query end to end (correct value: high; wrong value: contradicted, low).
+
 ## 1.0.5 — 2026-11-15
 
 In the HLT run the planner added `run_analysis` over `@S1.2` (a `read_section` result) to "produce the final evidence-based answer"; it failed with "input @S1.2 has no CSV result", and that failure lowered an answer whose claims were all verified to MEDIUM. Evidence verification is unchanged.

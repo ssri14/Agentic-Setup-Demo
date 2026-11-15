@@ -13,7 +13,8 @@ import { counts, gridToCsv, safeName, sampleGaps, summarize, toCsv, trim } from 
 export type EvidenceKind = 'passage' | 'section' | 'table' | 'figure' | 'channel' | 'run' | 'telemetry' | 'events' | 'analysis' | 'entity';
 export interface Evidence { kind: EvidenceKind; ref: string; label: string; page?: number; section?: string; run_id?: string; start?: number; end?: number }
 export interface ArtifactRef { id: string; name: string; kind: Artifact['kind']; rows?: number; columns?: string[] }
-export interface ToolResult { summary: string; data: unknown; evidence: Evidence[]; artifacts: ArtifactRef[] }
+/** records: the structured rows behind the evidence (telemetry samples, events), used to verify claims; not shown as tool data. */
+export interface ToolResult { summary: string; data: unknown; evidence: Evidence[]; artifacts: ArtifactRef[]; records?: Record<string, unknown>[] }
 export interface ToolContext { mission: Mission; user: User; store: Store; sources: Sources }
 
 export class ToolError extends Error {}
@@ -364,6 +365,7 @@ const telemetryWindow = tool({
         delivery_states: counts(rows.map((r) => r.delivery_state)), channels, preview },
       evidence: [{ kind: 'telemetry', ref: `${args.run_id}:${args.start}-${end}:${columns.join(',')}`, label: `${args.run_id} · ${args.start}-${end} s · ${columns.length} channel${columns.length > 1 ? 's' : ''}`, run_id: args.run_id, start: args.start, end }],
       artifacts: [artifact],
+      records: rows.map((r) => ({ run_id: args.run_id, mission_elapsed_s: r.mission_elapsed_s, sample_index: r.sample_index, delivery_state: r.delivery_state, ...Object.fromEntries(columns.map((c) => [c, r[c]])) })),
     };
   },
 });
@@ -401,6 +403,7 @@ const eventsWindow = tool({
       data: { run_id: args.run_id, count: events.length, by_type: counts(events.map((e) => e.type)), events: events.slice(0, 80), events_truncated: events.length > 80 },
       evidence: [{ kind: 'events', ref: `${args.run_id}:events:${args.start}-${args.end}`, label: `${args.run_id} events · ${args.start}-${args.end} s`, run_id: args.run_id, start: args.start, end: args.end }],
       artifacts: [artifact],
+      records: events.map((e) => ({ run_id: args.run_id, event_seq: e.seq, mission_elapsed_s: e.t_s, subsystem_id: e.subsystem, type: e.type, message: e.message, receipt_delay_s: e.receipt_delay_s })),
     };
   },
 });

@@ -309,7 +309,8 @@ export async function buildApp(store: Store, config: Config, sources?: Sources, 
     const body = parse(z.object({ mission: z.string().min(1).max(40), args: z.record(z.string(), z.unknown()).default({}) }), req.body);
     const mission = await requireMission(user, body.mission);
     try {
-      return { ok: true, ...(await runTool(req.params.name, body.args, { mission, user, store, sources: sources! })) };
+      const { records: _records, ...result } = await runTool(req.params.name, body.args, { mission, user, store, sources: sources! });   // records are for claim checks only
+      return { ok: true, ...result };
     } catch (error) {
       if (error instanceof ToolError) return { ok: false, error: error.message };
       const message = (error as Error).message ?? String(error);

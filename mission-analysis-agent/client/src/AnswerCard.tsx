@@ -61,6 +61,11 @@ export default function AnswerCard({ report, run, onEvidence, onReplay }: { repo
         <details className="answer-more"><summary>Open uncertainties ({report.uncertainties.length + (report.limits?.length ?? 0)})</summary>
           <ul>{report.uncertainties.map((u, i) => <li key={i}>{u}</li>)}{report.limits?.map((l, i) => <li key={`l${i}`} className="limit">Investigation limit: {l}</li>)}</ul></details>
       )}
+      {!!report.provenance?.length && (
+        <details className="answer-more workflow-notes"><summary>Citation notes ({report.provenance.length})</summary>
+          <p className="muted small">Claims whose quotation is not worded as in the source, although the facts they state are in the cited evidence. They do not change the confidence.</p>
+          <ul>{report.provenance.map((w, i) => <li key={i}>{w}</li>)}</ul></details>
+      )}
       {!!report.workflow?.length && (
         <details className="answer-more workflow-notes"><summary>Workflow notes ({report.workflow.length})</summary>
           <p className="muted small">Steps that failed or were stopped during the investigation. They do not change the verified claims above.</p>
