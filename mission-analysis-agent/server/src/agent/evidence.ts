@@ -299,8 +299,11 @@ export function recordSupport(claim: string, records: RecordRow[], window?: { st
   const keys = Object.keys(records[0]);
   const fieldRe = (k: string) => FIELD_ALIASES[k] ?? new RegExp(`(^|[^A-Za-z0-9_])${k}(?![A-Za-z0-9_])`);
   const valueKeys = keys.filter((k) => k !== 'mission_elapsed_s' && k !== 'run_id' && (!RECORD_META.has(k) || FIELD_ALIASES[k]));
-  const mentioned = valueKeys.map((k) => { const m = fieldRe(k).exec(claim); return m ? { k, at: m.index + m[0].length } : null; })
-    .filter((x): x is { k: string; at: number } => !!x).sort((a, b) => a.at - b.at);
+  const byName = channelMentions(claim, valueKeys.filter((k) => !FIELD_ALIASES[k]));
+  const mentioned = [
+    ...valueKeys.filter((k) => FIELD_ALIASES[k]).map((k) => { const m = fieldRe(k).exec(claim); return m ? { k, at: m.index + m[0].length } : null; }).filter((x): x is { k: string; at: number } => !!x),
+    ...[...new Set(byName.map((m) => m.k))].map((k) => ({ k, at: byName.find((m) => m.k === k)!.end })),
+  ].sort((a, b) => a.at - b.at);
   const mentionedKeys = mentioned.map((x) => x.k);
   // Field values the claim names (an event type, a subsystem, an enum state): the record must carry them.
   const tokens = new Set(claim.toUpperCase().match(/[A-Z][A-Z0-9_]*/g) ?? []);
@@ -367,8 +370,17 @@ export function recordSupport(claim: string, records: RecordRow[], window?: { st
     return inside ? { status: 'absent', detail: `no record at exactly ${times.join(', ')} s in this window` } : null;
   }
   // A named text field (stg_state, delivery_state) must carry one of the state words the claim states, if it states any.
-  const stateWords = [...tokens].filter((w) => /^[A-Z][A-Z_]{2,}$/.test(w) && !claimRuns.includes(w) && !keys.some((k) => k.toUpperCase() === w));
+  // States the claim gives: words written in capitals, record values it names in any case, and the word qualifying a
+  // state channel ("a degraded overall health state", "stg_state PENDING").
   const textMentioned = mentionedKeys.filter((k) => textFields.includes(k));
+  const knownStates = new Set(records.flatMap((r) => textFields.map((k) => String(r[k] ?? '').toUpperCase())).filter(Boolean));
+  const adjacent = byName.filter((m) => textFields.includes(m.k)).flatMap((m) => [/([A-Za-z_]+)\s*$/.exec(claim.slice(0, m.start))?.[1], /^\s*(?:=|:|is|was|of)?\s*([A-Za-z_]+)/.exec(claim.slice(m.end))?.[1]])
+    .filter((w): w is string => !!w && !ARTICLE.has(w.toLowerCase()) && !CMP_WORDS.has(w.toLowerCase()) && !keys.includes(w) && !/^[a-z]+_[a-z_]+$/.test(w));
+  const stateWords = [...new Set([
+    ...(claim.replace(ID_SPAN, blank).match(/\b[A-Z][A-Z0-9_]{2,}\b/g) ?? []).filter((w) => !STOP.has(w) && !keys.some((k) => k.toUpperCase() === w)),
+    ...(claim.match(/[A-Za-z][A-Za-z_]+/g) ?? []).map((w) => w.toUpperCase()).filter((w) => knownStates.has(w)),
+    ...adjacent.map((w) => w.toUpperCase()),
+  ])];
   const agrees = (r: RecordRow) => named.every(({ k, values: vs }) => vs.includes(String(r[k] ?? '').toUpperCase()))
     && textMentioned.every((k) => !stateWords.length || stateWords.includes(String(r[k] ?? '').toUpperCase()))
     && (!hasMessages || quoted.every((q) => norm(String(r.message ?? '')).includes(q)));
@@ -383,4 +395,198 @@ export function recordSupport(claim: string, records: RecordRow[], window?: { st
     ...(hasMessages && quoted.some((q) => !norm(String(at.message ?? '')).includes(q)) ? [`message "${at.message}"`] : []),
   ];
   return { status: 'mismatch', line: recordLine(at), detail: `at ${at.mission_elapsed_s} s the record has ${wrong.join('; ') || 'other values'}` };
+}
+
+// ---------------- channel names in prose ----------------
+
+/** Expansions of the words in channel IDs (subsystem prefixes and abbreviations), as analysts write them. */
+const WORDS: Record<string, string[]> = {
+  pwr: ['power', 'pwr'], thm: ['thermal', 'thm'], daq: ['daq', 'acquisition'], hlt: ['health', 'hlt'], clk: ['clock', 'clk'],
+  com: ['comms', 'communication', 'communications', 'link', 'com'], sup: ['supervisor', 'sup'], seq: ['sequencer', 'sequence', 'seq'],
+  stg: ['stage', 'staging', 'stg'], cfg: ['configuration', 'config', 'cfg'], act: ['actuator', 'act'], env: ['environment', 'environmental', 'env'],
+  temp: ['temperature', 'temp'], pct: ['percent', 'percentage', 'pct'],
+};
+const PREFIXES = new Set(['pwr', 'thm', 'daq', 'hlt', 'clk', 'com', 'sup', 'seq', 'stg', 'cfg', 'act', 'env']);
+const UNITS = new Set(['pu', 'ms', 's', 'hz', 'pct']);
+const GENERIC = new Set(['state', 'fault', 'mode', 'warning', 'count', 'id', 'ok', 'level', 'rate', 'delta', 'pending']);
+const OPTIONAL = new Set(['overall']);
+
+export type ChannelMention = { k: string; start: number; end: number; exact: boolean };
+
+/**
+ * Where a claim names each of the given channels: by its ID (pwr_margin_pu) or in words ("power margin",
+ * "core temperature", "DAQ quality", "overall health state"). A phrase that fits two channels equally is not a mention.
+ */
+export function channelMentions(text: string, keys: string[]): ChannelMention[] {
+  text = plain(text);
+  const out: ChannelMention[] = [];
+  for (const k of keys) for (const m of text.matchAll(new RegExp(`(?<![A-Za-z0-9_])${k}(?![A-Za-z0-9_])`, 'g'))) out.push({ k, start: m.index!, end: m.index! + k.length, exact: true });
+  const masked = out.reduce((s, m) => s.slice(0, m.start) + ' '.repeat(m.end - m.start) + s.slice(m.end), text);
+  const words = [...masked.matchAll(/[A-Za-z][A-Za-z0-9]*/g)].map((m) => ({ w: m[0].toLowerCase().replace(/s$/, ''), raw: m[0].toLowerCase(), start: m.index!, end: m.index! + m[0].length }));
+  const fits = (token: string, w: { w: string; raw: string }) => (WORDS[token] ?? [token]).some((x) => x === w.raw || x === w.w);
+  const found: (ChannelMention & { n: number })[] = [];
+  for (const k of keys) {
+    const parts = k.split('_');
+    const prefix = PREFIXES.has(parts[0]) ? parts[0] : null;
+    const heads = parts.slice(prefix ? 1 : 0).filter((x, i, a) => !(i === a.length - 1 && UNITS.has(x)) && !OPTIONAL.has(x));
+    const need = !heads.length || heads.every((h) => GENERIC.has(h)) ? [...(prefix ? [prefix] : []), ...heads] : heads;
+    if (!need.length) continue;
+    const span = need.length + 2;
+    for (let i = 0; i < words.length; i++) {
+      const win = words.slice(i, i + span);
+      if (!fits(need[0], win[0]) && !need.some((n) => fits(n, win[0])) && !(prefix && fits(prefix, win[0]))) continue;
+      const hit = need.map((n) => win.find((w) => fits(n, w)));
+      if (hit.some((h) => !h)) continue;
+      const used = [...hit, ...(prefix ? [win.find((w) => fits(prefix, w))] : []), ...words.slice(i, i + span).filter((w) => OPTIONAL.has(w.raw))].filter(Boolean) as typeof words;
+      const inSpan = used.filter((w) => w.start >= win[0].start);
+      let start = Math.min(...inSpan.map((w) => w.start));
+      const end = Math.max(...inSpan.map((w) => w.end));
+      for (let j = words.findIndex((w) => w.start === start) - 1; j >= 0 && (OPTIONAL.has(words[j].raw) || (prefix && fits(prefix, words[j]))) && words[j + 1].start - words[j].end <= 2; j--) start = words[j].start;
+      if (!found.some((f) => f.k === k && f.start <= start && f.end >= end)) found.push({ k, start, end, exact: false, n: inSpan.length });
+    }
+  }
+  // Keep the most specific reading of overlapping phrases; drop ties between different channels.
+  for (const f of found) {
+    const rivals = found.filter((g) => g !== f && g.start < f.end && f.start < g.end);
+    if (rivals.some((g) => g.n > f.n || (g.n === f.n && g.k !== f.k) || (g.k === f.k && g.end - g.start < f.end - f.start))) continue;
+    if (!out.some((o) => o.k === f.k && o.start === f.start)) out.push({ k: f.k, start: f.start, end: f.end, exact: false });
+  }
+  return out.sort((a, b) => a.start - b.start);
+}
+
+// ---------------- comparisons across runs ----------------
+
+export type RecordSet = { evidence: string; records: RecordRow[]; start?: number; end?: number };
+const CMP: Record<string, '<' | '>' | '=' | null> = {
+  lower: '<', smaller: '<', less: '<', below: '<', fewer: '<', reduced: '<',
+  higher: '>', greater: '>', larger: '>', more: '>', above: '>', exceeds: '>', elevated: '>',
+  worse: null, better: null, improved: null,
+  equal: '=', same: '=', identical: '=', unchanged: '=',
+};
+const DEGREE = '(?:slightly|marginally|much|significantly|considerably|substantially|somewhat|a\\s+bit|far|notably)';
+const LINK = new RegExp(`^\\s*(?:(?:of|for|in)\\s+[A-Za-z]{2,}-RUN-\\d+\\s*)?(?:\\([^)]*\\)\\s*)?(?:is|was|are|were|remains?|stays?|runs?|reads?)?\\s*(?:${DEGREE}\\s+)?$`, 'i');
+const LEAD = new RegExp(`^\\s*(?:${DEGREE}\\s+)?$`, 'i');
+const CMP_WORDS = new Set(['lower', 'smaller', 'less', 'below', 'fewer', 'reduced', 'higher', 'greater', 'larger', 'more', 'above', 'exceeds', 'elevated', 'worse', 'better', 'improved', 'equal', 'same', 'identical', 'unchanged']);
+const ARTICLE = new Set(['a', 'an', 'the', 'its', 'their', 'has', 'had', 'have', 'with', 'and', 'or', 'of', 'in', 'at', 'same', 'different', 'identical', 'equal', 'is', 'was', 'shows', 'show', 'showed', 'reports', 'reported', 'by', 'for', 'to', 'than', 'while', 'whereas', 'but']);
+
+/**
+ * Checks a claim that names two or more runs (a comparison, or values side by side) against the records of all the
+ * evidence it cites, joined by run ID and the exact time. A comparison needs a reference run ("compared with R",
+ * "than R", "versus R"); each comparative word (lower, higher, equal ...) is bound to the channel it qualifies, by ID or
+ * in words, and checked numerically on the two records, with any "(a vs b)" pair or "by d" difference it states.
+ * A state named for a channel ("a degraded overall health state") must be the subject run's recorded state.
+ * Runs not in the cited evidence and times without a record are reported; wording that cannot be bound is "unparsed".
+ * Returns null when the claim names fewer than two runs.
+ */
+export function compareSupport(claim: string, sets: RecordSet[]): RecordCheck {
+  const full = plain(claim);
+  const text = full.replace(/["“][^"“”]{4,}["”]/g, blank);
+  const runAt = [...text.matchAll(/\b[A-Za-z]{2,}-RUN-\d+\b/gi)].map((m) => ({ run: m[0].toUpperCase(), start: m.index!, end: m.index! + m[0].length }));
+  const runs = [...new Set(runAt.map((r) => r.run))];
+  if (runs.length < 2) return null;
+  const all = sets.flatMap((s) => s.records.map((r) => ({ r, s })));
+  const missingRuns = runs.filter((run) => !all.some((x) => String(x.r.run_id).toUpperCase() === run));
+  if (missingRuns.length) return { status: 'absent', detail: `${missingRuns.join(', ')} ${missingRuns.length > 1 ? 'are' : 'is'} not in the cited evidence (${sets.map((s) => s.evidence).join(', ')})` };
+  if (/\b(no|not|missing|absent|without|gaps?|lost|dropouts?|never|none)\b/i.test(text) || RANGE.test(text)) return null;
+
+  const timeSpans = [...text.matchAll(/(?:mission_elapsed_s|\bt)\s*(?:=|of)\s*(-?\d+(?:\.\d+)?)|(-?\d+(?:\.\d+)?)\s*(?:s|sec|secs|seconds)\b/gi)]
+    .map((m) => ({ n: Number(m[1] ?? m[2]), at: m.index! + m[0].indexOf(m[1] ?? m[2]) }));
+  const times = [...new Set(timeSpans.map((x) => x.n))];
+  if (!times.length) return null;                                          // a comparison over a whole run: an aggregate
+  if (times.length > 1) return { status: 'unparsed', detail: 'compares runs at different times; state one time for the comparison' };
+  const t = times[0];
+  const row: Record<string, RecordRow> = {};
+  for (const run of runs) {
+    const x = all.find((y) => String(y.r.run_id).toUpperCase() === run && Math.abs(Number(y.r.mission_elapsed_s) - t) < 1e-9);
+    if (!x) {
+      const s = all.find((y) => String(y.r.run_id).toUpperCase() === run)!.s;
+      const inside = (s.start === undefined || t >= s.start) && (s.end === undefined || t < s.end);
+      return inside ? { status: 'absent', detail: `no record for ${run} at exactly ${t} s in ${s.evidence}` } : { status: 'unparsed', detail: `${s.evidence} does not cover ${t} s for ${run}` };
+    }
+    row[run] = x.r;
+  }
+  const keys = [...new Set(runs.flatMap((r) => Object.keys(row[r])))].filter((k) => !RECORD_META.has(k) && k !== 'mission_elapsed_s');
+  const mentions = channelMentions(text, keys);
+  const enumValues = (k: string) => new Set(all.map((x) => String(x.r[k] ?? '').toUpperCase()).filter((v) => v && Number.isNaN(Number(v))));
+  const isEnum = (k: string) => enumValues(k).size > 0;
+  const lines = runs.map((r) => recordLine(row[r])).join('\n');
+  const wrong: string[] = [];
+  const used = new Set<number>(timeSpans.map((x) => x.at));
+  const numAt = numberSpans(text);
+  const fmt = (run: string, k: string) => `${run} ${k} = ${row[run][k]}`;
+
+  // Subject and reference: the run after "compared with / than / versus / relative to" is the reference.
+  const marker = /\b(?:compared\s+(?:with|to)|relative\s+to|versus|vs\.?|than(?:\s+(?:in|for|that\s+of))?|against)\s*$/i;
+  const refs = runAt.filter((r) => marker.test(text.slice(Math.max(0, r.start - 40), r.start)));
+  const cmpWords = [...text.matchAll(new RegExp(`\\b(${Object.keys(CMP).join('|')})\\b`, 'gi'))].map((m) => ({ w: m[1].toLowerCase(), start: m.index!, end: m.index! + m[1].length }));
+
+  if (cmpWords.length) {
+    const refRuns = [...new Set(refs.map((r) => r.run))];
+    if (runs.length !== 2 || refRuns.length !== 1) return { status: 'unparsed', detail: 'a comparison must name two runs and which one is the reference ("compared with R", "than R")' };
+    const ref = refRuns[0], subj = runs.find((r) => r !== ref)!;
+    for (const c of cmpWords) {
+      // Bind the comparative to its channel: "<channel> is (slightly) higher", or "(a) lower <channel>".
+      const before = mentions.filter((m) => m.end <= c.start).pop();
+      const after = mentions.find((m) => m.start >= c.end);
+      const k = before && LINK.test(text.slice(before.end, c.start)) ? before.k : after && LEAD.test(text.slice(c.end, after.start)) ? after.k : null;
+      if (!k) return { status: 'unparsed', detail: `cannot tell which channel "${c.w}" refers to` };
+      const op = CMP[c.w];
+      if (!op) return { status: 'unparsed', detail: `"${c.w}" has no numerical direction; say lower or higher` };
+      const a = row[subj][k], b = row[ref][k];
+      if (isEnum(k)) {
+        if (op !== '=') return { status: 'unparsed', detail: `"${c.w}" is not defined for the state channel ${k}` };
+        if (String(a) !== String(b)) wrong.push(`${fmt(subj, k)} and ${fmt(ref, k)} are not the same`);
+        continue;
+      }
+      const x = Number(a), y = Number(b);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) { wrong.push(`${k} is not recorded for both runs at ${t} s`); continue; }
+      const holds = op === '<' ? x < y : op === '>' ? x > y : Math.abs(x - y) < 1e-9;
+      if (!holds) wrong.push(`${fmt(subj, k)} is not ${op === '=' ? 'equal to' : `${c.w} than`} ${fmt(ref, k)}`);
+      // Stated figures: "(a vs b)" are the subject's and the reference's values; "by d" is their difference.
+      const mention = before?.k === k ? before : after!;
+      const tail = text.slice(Math.max(c.end, mention.end), Math.max(c.end, mention.end) + 60);
+      const pair = /^\s*,?\s*\(\s*(-?\d+(?:\.\d+)?)\s*(?:vs\.?|versus|against|compared\s+(?:with|to))\s*(-?\d+(?:\.\d+)?)\s*\)/i.exec(tail);
+      const BY = /^\s*(?:than\s+(?:in\s+|for\s+)?[A-Za-z]{2,}-RUN-\d+\s*,?\s*)?(?:\([^)]*\)\s*)?by\s+(-?\d+(?:\.\d+)?)/i;
+      const by = BY.exec(tail) ?? BY.exec(text.slice(c.end, c.end + 60));
+      const base = Math.max(c.end, mention.end);
+      if (pair) {
+        if (!numEq(pair[1], x) || !numEq(pair[2], y)) wrong.push(`${k} is ${x} in ${subj} and ${y} in ${ref}, not ${pair[1]} vs ${pair[2]}`);
+        for (const n of numAt) if (n.at >= base && n.at < base + pair[0].length + 1) used.add(n.at);
+      }
+      if (by) {
+        if (!numEq(by[1], Math.abs(x - y))) wrong.push(`the ${k} difference is ${Number(Math.abs(x - y).toFixed(6))}, not ${by[1]}`);
+        for (const n of numAt) if (n.n === by[1] && n.at >= c.end && n.at < base + 60) used.add(n.at);
+      }
+    }
+    // States named for the subject: "a degraded overall health state", "hlt_overall_state DEGRADED".
+    for (const m of mentions.filter((m) => isEnum(m.k))) {
+      const prev = /([A-Za-z_]+)\s*$/.exec(text.slice(0, m.start))?.[1];
+      const next = /^\s*(?:=|:|is|was|of)?\s*([A-Z][A-Z_]{2,})\b/.exec(text.slice(m.end))?.[1];
+      const pairState = /^\s*\(\s*([A-Za-z_]+)\s*(?:vs\.?|versus)\s*([A-Za-z_]+)\s*\)/i.exec(text.slice(m.end));
+      if (pairState) {
+        if (String(row[subj][m.k]).toUpperCase() !== pairState[1].toUpperCase() || String(row[ref][m.k]).toUpperCase() !== pairState[2].toUpperCase())
+          wrong.push(`${fmt(subj, m.k)} and ${fmt(ref, m.k)}, not ${pairState[1]} vs ${pairState[2]}`);
+        continue;
+      }
+      for (const s of [prev, next].filter((v): v is string => !!v && !ARTICLE.has(v.toLowerCase()) && !CMP[v.toLowerCase()])) {
+        if (!enumValues(m.k).has(s.toUpperCase())) return { status: 'unparsed', detail: `"${s}" is not a recorded state of ${m.k}` };
+        if (String(row[subj][m.k]).toUpperCase() !== s.toUpperCase()) wrong.push(`${fmt(subj, m.k)}, not ${s.toUpperCase()}`);
+      }
+    }
+    const stray = numAt.filter((n) => !used.has(n.at));
+    if (stray.length) return { status: 'unparsed', detail: `cannot tell what ${stray.map((n) => n.n).join(', ')} refer${stray.length > 1 ? '' : 's'} to; give values as (subject vs reference)` };
+    return wrong.length ? { status: 'mismatch', line: lines, detail: `at ${t} s ${wrong.join('; ')}` } : { status: 'match', line: lines };
+  }
+
+  // No comparison: values side by side. Each run's part of the claim is checked on that run's record.
+  const firstRun = runAt[0].start;
+  for (let i = 0; i < runAt.length; i++) {
+    const seg = text.slice(i === 0 ? 0 : runAt[i].start, i + 1 < runAt.length ? runAt[i + 1].start : text.length);
+    if (i === 0 && !numberSpans(seg.slice(firstRun)).length && !channelMentions(seg, keys).length) continue;
+    const res = recordSupport(`${seg} at ${t} s`, [row[runAt[i].run]]);
+    if (!res) return { status: 'unparsed', detail: `cannot check the part about ${runAt[i].run}` };
+    if (res.status === 'unparsed') return res;
+    if (res.status === 'mismatch') wrong.push(`${runAt[i].run}: ${res.detail}`);
+  }
+  return wrong.length ? { status: 'mismatch', line: lines, detail: wrong.join('; ') } : { status: 'match', line: lines };
 }

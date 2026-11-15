@@ -150,7 +150,7 @@ docker compose run --rm -e RUN_INTEGRATION=1 --entrypoint python ingest -m pytes
 docker compose exec analysis-sandbox python -m pytest -q -p no:cacheprovider tests                                   # sandbox policy
 ```
 
-The agent's own tests (104, no stores needed) run from source: `cd ../mission-analysis-agent && npm ci && npm test`.
+The agent's own tests (115, no stores needed) run from source: `cd ../mission-analysis-agent && npm ci && npm test`.
 
 ## Configuration reference
 
@@ -190,7 +190,7 @@ The superuser chooses provider and model per agent role (planner, verifier, anal
 
 **Ports**: `INFLUX_PORT`, `NEO4J_HTTP_PORT`, `NEO4J_BOLT_PORT`, `MONGO_PORT`, `QDRANT_PORT`, `DASHBOARD_PORT`, `AGENT_PORT`, `MONGO_VIEWER_PORT`, `INFLUX_EXPLORER_PORT`. Change one if it clashes with something already on the host.
 
-**Images**: `IMAGE_NAMESPACE` (default `ssri14`) and `IMAGE_TAG` (default `1.0.8`).
+**Images**: `IMAGE_NAMESPACE` (default `ssri14`) and `IMAGE_TAG` (default `1.0.9`).
 
 ## Day-to-day operations
 

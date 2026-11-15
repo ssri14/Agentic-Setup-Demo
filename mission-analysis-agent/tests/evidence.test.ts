@@ -1,7 +1,7 @@
 /** Claim validation against the real Mission Document text (SEC-03 p.11, SEC-04 p.16 as extracted by PyMuPDF). */
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { cellFound, labelTables, locateSupport, numbersIn, numbersSupported, quoteFound, recordSupport } from '../server/src/agent/evidence.js';
+import { cellFound, channelMentions, compareSupport, labelTables, locateSupport, numbersIn, numbersSupported, quoteFound, recordSupport } from '../server/src/agent/evidence.js';
 
 const extraction = JSON.parse(readFileSync(new URL('./fixtures/brahmastra/extraction.json', import.meta.url), 'utf8'));
 const chunk = (pred: (c: { page: number; kind: string; text: string }) => boolean) => labelTables(extraction.chunks.find(pred).text);
@@ -226,6 +226,65 @@ describe('re-review R03: sample_index as a keyed field', () => {
     expect(recordSupport('At 100 s sample_index = 200 and pwr_bus_level_pu = 0.8664', w)?.status).toBe('match');
     expect(recordSupport('At 100 s sample_index = 201 and pwr_bus_level_pu = 0.8664', w))
       .toMatchObject({ status: 'mismatch', detail: 'at 100 s the record has sample_index = 200, not 201' });
+  });
+});
+
+// The observed comparison: BM-RUN-0001 versus BM-RUN-0016 at exactly 456 s (values as retrieved by telemetry_window).
+const r01 = { run_id: 'BM-RUN-0001', mission_elapsed_s: 456, sample_index: 912, delivery_state: 'DELIVERED', pwr_margin_pu: 0.7515, thm_core_temp_pu: 0.4591, daq_quality_pu: 0.991, hlt_overall_state: 'NOMINAL' };
+const r16 = { ...r01, run_id: 'BM-RUN-0016', pwr_margin_pu: 0.2751, thm_core_temp_pu: 0.5407, daq_quality_pu: 0.9915, hlt_overall_state: 'DEGRADED' };
+const after = (r: typeof r01) => ({ ...r, mission_elapsed_s: 456.5, sample_index: 913 });
+const cmpSets = [{ evidence: 'E2', records: [r01, after(r01)], start: 456, end: 457 }, { evidence: 'E3', records: [r16, after(r16)], start: 456, end: 457 }];
+const compare = (claim: string, sets = cmpSets) => compareSupport(claim, sets);
+
+describe('channel names in prose', () => {
+  it('recognises registered channels by their domain names', () => {
+    const keys = Object.keys(r01);
+    expect(channelMentions('a lower power margin, a higher core temperature, a degraded overall health state, DAQ quality', keys).map((m) => m.k))
+      .toEqual(['pwr_margin_pu', 'thm_core_temp_pu', 'hlt_overall_state', 'daq_quality_pu']);
+    expect(channelMentions('pwr_margin_pu and the thermal core temp', keys).map((m) => m.k)).toEqual(['pwr_margin_pu', 'thm_core_temp_pu']);
+  });
+  it('does not guess a channel from a generic word', () => {
+    expect(channelMentions('the temperature and the state were normal', ['thm_core_temp_pu', 'thm_payload_temp_pu', 'stg_state', 'hlt_overall_state'])).toEqual([]);
+    expect(channelMentions('the power was low', ['pwr_bus_level_pu', 'pwr_margin_pu', 'pwr_load_pu'])).toEqual([]);
+  });
+});
+
+describe('comparisons across runs (BM-RUN-0001 versus BM-RUN-0016 at 456 s)', () => {
+  const observed = 'Compared with BM-RUN-0001, BM-RUN-0016 at 456 s has a lower power margin, a higher core temperature, and a degraded overall health state (DAQ quality is slightly higher).';
+  it('verifies the observed claim, joining both cited records by run and exact time', () => {
+    const r = compare(observed) as { status: string; line: string };
+    expect(r.status).toBe('match');
+    expect(r.line.split('\n')).toEqual([expect.stringContaining('run_id = BM-RUN-0001; mission_elapsed_s = 456; sample_index = 912'), expect.stringContaining('run_id = BM-RUN-0016; mission_elapsed_s = 456; sample_index = 912')]);
+    expect(compare(observed.replace(/BM-RUN-/g, 'BM\u2011RUN\u2011'))?.status).toBe('match');
+  });
+  it('accepts the same comparison in other forms, with stated values and differences', () => {
+    expect(compare('BM-RUN-0016 has a lower pwr_margin_pu (0.2751 vs 0.7515), a higher thm_core_temp_pu (0.5407 vs 0.4591) and a degraded hlt_overall_state (DEGRADED vs NOMINAL) than BM-RUN-0001 at 456 s')?.status).toBe('match');
+    expect(compare('At 456 s the power margin of BM-RUN-0016 is lower than BM-RUN-0001 by 0.4764')?.status).toBe('match');
+    expect(compare('At 456 s BM-RUN-0001 has a higher power margin than BM-RUN-0016')?.status).toBe('match');
+    expect(compare('At 456 s BM-RUN-0001 has pwr_margin_pu = 0.7515 and hlt_overall_state NOMINAL, while BM-RUN-0016 has pwr_margin_pu = 0.2751 and hlt_overall_state DEGRADED')?.status).toBe('match');
+  });
+  it('rejects a reversed comparison, naming each channel that differs', () => {
+    expect(compare(observed.replace('Compared with BM-RUN-0001, BM-RUN-0016', 'Compared with BM-RUN-0016, BM-RUN-0001'))).toMatchObject({ status: 'mismatch',
+      detail: 'at 456 s BM-RUN-0001 pwr_margin_pu = 0.7515 is not lower than BM-RUN-0016 pwr_margin_pu = 0.2751; BM-RUN-0001 thm_core_temp_pu = 0.4591 is not higher than BM-RUN-0016 thm_core_temp_pu = 0.5407; BM-RUN-0001 daq_quality_pu = 0.991 is not higher than BM-RUN-0016 daq_quality_pu = 0.9915; BM-RUN-0001 hlt_overall_state = NOMINAL, not DEGRADED' });
+    expect(compare(observed.replace('slightly higher', 'slightly lower'))).toMatchObject({ status: 'mismatch', detail: expect.stringContaining('daq_quality_pu = 0.9915 is not lower than') });
+    expect(compare(observed.replace('degraded', 'nominal'))).toMatchObject({ status: 'mismatch', detail: expect.stringContaining('hlt_overall_state = DEGRADED, not NOMINAL') });
+  });
+  it('rejects incorrect stated values and differences', () => {
+    expect(compare('BM-RUN-0016 has a lower pwr_margin_pu (0.2751 vs 0.7615) than BM-RUN-0001 at 456 s')).toMatchObject({ status: 'mismatch', detail: expect.stringContaining('not 0.2751 vs 0.7615') });
+    expect(compare('At 456 s the power margin of BM-RUN-0016 is lower than BM-RUN-0001 by 0.5')).toMatchObject({ status: 'mismatch', detail: 'at 456 s the pwr_margin_pu difference is 0.4764, not 0.5' });
+    expect(compare('At 456 s BM-RUN-0001 has pwr_margin_pu = 0.7515 while BM-RUN-0016 has pwr_margin_pu = 0.2851')).toMatchObject({ status: 'mismatch', detail: expect.stringContaining('pwr_margin_pu = 0.2751, not 0.2851') });
+  });
+  it('reports missing records and runs that are not in the cited evidence', () => {
+    expect(compare(observed.replace('BM-RUN-0016', 'BM-RUN-0017'))).toEqual({ status: 'absent', detail: 'BM-RUN-0017 is not in the cited evidence (E2, E3)' });
+    expect(compare(observed, [cmpSets[0]])).toEqual({ status: 'absent', detail: 'BM-RUN-0016 is not in the cited evidence (E2)' });
+    expect(compare(observed.replace('456 s', '456.25 s'))).toEqual({ status: 'absent', detail: 'no record for BM-RUN-0001 at exactly 456.25 s in E2' });
+    expect(compare(observed.replace('456 s', '460 s'))?.status).toBe('unparsed');
+  });
+  it('does not guess what it cannot bind', () => {
+    expect(compare('At 456 s BM-RUN-0016 is lower than BM-RUN-0001')?.status).toBe('unparsed');                 // no channel
+    expect(compare('At 456 s BM-RUN-0016 has a better power margin than BM-RUN-0001')?.status).toBe('unparsed'); // no direction
+    expect(compare('At 456 s BM-RUN-0016 and BM-RUN-0001 differ: one has a lower power margin')?.status).toBe('unparsed'); // no reference run
+    expect(compare('Compared with BM-RUN-0001, BM-RUN-0016 at 456 s has a critical overall health state')?.status).not.toBe('match');
   });
 });
 

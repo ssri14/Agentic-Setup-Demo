@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.9 — 2026-11-15
+
+For "Compare BM-RUN-0001 and BM-RUN-0016 at exactly 456 seconds …", the eight per-run claims were verified but the comparison "Compared with BM-RUN-0001, BM-RUN-0016 at 456 s has a lower power margin, a higher core temperature, and a degraded overall health state (DAQ quality is slightly higher)" was "not established: DAQ does not appear in E2, E3", lowering confidence to LOW. Cause: the record check handled one run per evidence item, so a claim spanning two cited telemetry items fell through to the text check, whose identifier test does not know that "DAQ quality" names `daq_quality_pu`. The identifier test is unchanged; comparisons now get a real check (`server/src/agent/evidence.ts`, `compareSupport`). The planner, prompts, ingestion and data are unchanged.
+
+- **Comparisons across runs.** A claim naming two or more runs is checked against the records of all the evidence it cites, joined by run ID and exact time. The reference run is the one after "compared with / than / versus / relative to"; each comparative (lower, higher, greater, less, equal, same …) is bound to the channel it qualifies and checked numerically on the two records, as are stated pairs "(0.2751 vs 0.7515)" and differences "by 0.4764". A state named for the subject ("a degraded overall health state", "(DEGRADED vs NOMINAL)") must be its recorded state. Values side by side without a comparative are checked per run.
+- **Rejections.** A reversed comparison, a wrong value, pair or difference, or a wrong state is a contradiction naming each channel that differs. A run not in the cited evidence, or no record at the stated time, leaves the claim not established. A comparative that cannot be bound to a channel, has no numerical direction ("better"), or has no reference run is not checked mechanically and is never supported on the checker's word alone.
+- **Channel names in prose.** Registered channels are recognised by their domain names, derived from the channel ID (subsystem prefix and abbreviations: "power margin" → `pwr_margin_pu`, "core temperature" → `thm_core_temp_pu`, "DAQ quality" → `daq_quality_pu`, "overall health state" → `hlt_overall_state`); a generic word ("temperature", "state", "power") never names a channel on its own, and a phrase that fits two channels is not a mention. Single-run record claims use the same recognition.
+- 11 new tests (115 in total), including the exact BM-RUN-0001 versus BM-RUN-0016 example end to end (supported, high), its reversal (contradicted, low) and a comparison citing only one of its runs (not established). The 1.0.7 re-review probes still give the expected results.
+
 ## 1.0.8 — 2026-11-15
 
 Closes the gaps an independent re-review of 1.0.7 reproduced in the record check (`server/src/agent/evidence.ts`). The planner, prompts, ingestion and data are unchanged.

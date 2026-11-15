@@ -1,6 +1,6 @@
 {
   "name": "mission-analysis-agent",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "private": true,
   "type": "module",
   "description": "Mission Analysis Agent: web chat over mission documents and telemetry with a replayable Plan-Execute-Verify-Replan agent.",

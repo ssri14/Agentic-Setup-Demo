@@ -26,7 +26,7 @@ import type { Sources } from '../tools/sources.js';
 import { trim } from '../tools/util.js';
 import type { EventSink } from './events.js';
 import { completeJson, type ChatMessage, type ChatModel, type ModelRole } from './llm.js';
-import { MAX_CONTENT, identifiers, plain, cellFound, labelTables, locateSupport, numbersSupported, quoteFound, recordSupport, recordsContent, relatedLines, tableContent, type RecordRow } from './evidence.js';
+import { MAX_CONTENT, compareSupport, identifiers, plain, cellFound, labelTables, locateSupport, numbersSupported, quoteFound, recordSupport, recordsContent, relatedLines, tableContent, type RecordRow } from './evidence.js';
 import { analystMessages, checkerMessages, missionBlock, plannerMessages, recoveryMessages, reporterMessages, toolCatalog, verifierMessages, type MissionContext } from './prompts.js';
 import { AnalystOutput, CheckOutput, PlanOutput, ReportOutput, TASK_REF, VerifyOutput, planSchema, recoverSchema, taskRefs, type Claim, type ReportOutput as ReportValue } from './schemas.js';
 
@@ -672,6 +672,16 @@ export function buildAgent(ctx: AgentContext) {
     type Det = { cited: string[]; matched: SupportMatch; in: string | null; support: string | null; mismatch?: { evidence: string; line: string; detail: string }; absent?: string; unparsed?: string; numbers?: string[] };
     const det = draft.claims.map((c): Det => {
       const cited = c.evidence.filter((id) => pool.has(id));
+      // Several runs (a comparison, or values side by side): joined across all cited records by run ID and exact time.
+      const sets = cited.filter((id) => pool.get(id)!.records?.length).map((id) => { const e = pool.get(id)!; return { evidence: id, records: e.records!, start: e.start as number | undefined, end: e.end as number | undefined }; });
+      const cmp = sets.length ? compareSupport(c.text, sets) : null;
+      if (cmp) {
+        const ids = sets.map((s) => s.evidence).join(', ');
+        if (cmp.status === 'match') return { cited, matched: 'record', in: ids, support: cmp.line };
+        if (cmp.status === 'mismatch') return { cited, matched: null, in: null, support: null, mismatch: { evidence: sets[0].evidence, line: cmp.line, detail: cmp.detail } };
+        if (cmp.status === 'absent') return { cited, matched: null, in: null, support: null, absent: `${ids}: ${cmp.detail}` };
+        return { cited, matched: null, in: null, support: null, unparsed: `${ids}: ${cmp.detail}` };
+      }
       // Structured records (telemetry samples, events): run, time, channel or field, and value; no quotation needed.
       for (const id of cited) {
         const e = pool.get(id)!;

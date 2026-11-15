@@ -704,3 +704,63 @@ describe('claim check on telemetry records (observed regression)', () => {
     expect(model.calls.find((c) => c.role === 'verifier')!.messages[1].content).toContain('Record: run_id = BM-RUN-0010; mission_elapsed_s = 100; sample_index = 200; delivery_state = DELIVERED; pwr_bus_level_pu = 0.8664');
   });
 });
+
+describe('claim check on a comparison across runs (observed: BM-RUN-0001 versus BM-RUN-0016 at 456 s)', () => {
+  const channels = ['pwr_margin_pu', 'thm_core_temp_pu', 'daq_quality_pu', 'hlt_overall_state'];
+  const rows: Record<string, Record<string, unknown>[]> = {
+    'dataset-01': [{ sample_index: 912, mission_elapsed_s: 456, delivery_state: 'DELIVERED', pwr_margin_pu: 0.7515, thm_core_temp_pu: 0.4591, daq_quality_pu: 0.991, hlt_overall_state: 'NOMINAL' },
+      { sample_index: 913, mission_elapsed_s: 456.5, delivery_state: 'DELIVERED', pwr_margin_pu: 0.7502, thm_core_temp_pu: 0.4593, daq_quality_pu: 0.9908, hlt_overall_state: 'NOMINAL' }],
+    'dataset-16': [{ sample_index: 912, mission_elapsed_s: 456, delivery_state: 'DELIVERED', pwr_margin_pu: 0.2751, thm_core_temp_pu: 0.5407, daq_quality_pu: 0.9915, hlt_overall_state: 'DEGRADED' },
+      { sample_index: 913, mission_elapsed_s: 456.5, delivery_state: 'DELIVERED', pwr_margin_pu: 0.2744, thm_core_temp_pu: 0.5411, daq_quality_pu: 0.9913, hlt_overall_state: 'DEGRADED' }],
+  };
+  beforeEach(() => {
+    const fake = fakeSources({ timeseries: { async query(_db, sql, params) {
+      const cols = /SELECT ([\s\S]+?)\s+FROM/.exec(sql)![1].split(',').map((c) => c.trim().replaceAll('"', ''));
+      return (rows[String(params.dataset)] ?? []).filter((r) => Number(r.mission_elapsed_s) >= Number(params.start) && Number(r.mission_elapsed_s) < Number(params.end))
+        .map((r) => Object.fromEntries(cols.map((c) => [c, (r[c] ?? null) as never])));
+    } } });
+    const m01 = (fake.data.telemetry_runs as Record<string, unknown>[]).find((r) => r.run_id === 'BM-RUN-0001')!;
+    (fake.data.telemetry_runs as Record<string, unknown>[]).push({ ...m01, _id: 'dataset-16', run_id: 'BM-RUN-0016', manifest: { ...(m01.manifest as object), run_id: 'BM-RUN-0016' } });
+    sources = fake.sources;
+  });
+  const question = 'Compare BM-RUN-0001 and BM-RUN-0016 at exactly 456 seconds for pwr_margin_pu, thm_core_temp_pu, daq_quality_pu and hlt_overall_state.';
+  const plan = JSON.stringify({ objective: 'Compare the two runs at 456 s', hypotheses: [{ id: 'H1', statement: 'At 456 s the four channel values differ between BM-RUN-0001 and BM-RUN-0016' }],
+    steps: [{ id: 'S1', title: 'BM-RUN-0001 at 456 s', tasks: [{ id: 'S1.1', tool: 'telemetry_window', args: { run_id: 'BM-RUN-0001', channels, start: 456, end: 457 }, purpose: 'samples' }] },
+      { id: 'S2', title: 'BM-RUN-0016 at 456 s', tasks: [{ id: 'S2.1', tool: 'telemetry_window', args: { run_id: 'BM-RUN-0016', channels, start: 456, end: 457 }, purpose: 'samples' }] }] });
+  const verified = JSON.stringify({ verdicts: [{ hypothesis: 'H1', status: 'supported', confidence: 'high', evidence_for: ['E1', 'E2'], note: 'samples at 456 s' }], next: 'report', reason: 'answered' });
+  const answer = (comparison: string) => JSON.stringify({ conclusion: 'BM-RUN-0016 has a lower power margin, a higher core temperature and a degraded health state than BM-RUN-0001 at 456 s [E1, E2].', confidence: 'high', confidence_reason: 'direct samples', evidence: ['E1', 'E2'],
+    claims: [
+      { id: 'C1', text: 'BM-RUN-0001 at 456 s has pwr_margin_pu = 0.7515.', evidence: ['E1'], quote: 'pwr_margin_pu = 0.7515' },
+      { id: 'C2', text: 'BM-RUN-0016 at 456 s has daq_quality_pu = 0.9915.', evidence: ['E2'], quote: 'daq_quality_pu = 0.9915' },
+      { id: 'C3', text: comparison, evidence: ['E1', 'E2'], quote: 'BM-RUN-0016 has a lower pwr_margin_pu (0.2751 vs 0.7515)' },
+    ] });
+  const ask = async (comparison: string) => {
+    const model = new ScriptedModel({ title: ['{"title":"BM Run Comparison"}'], planner: [plan], verifier: [verified], reporter: [answer(comparison)] });   // checker: supported
+    const run = await runner(model).start(chat, user, mission, question);
+    expect((await settle(run.id)).status).toBe('complete');
+    return (await store.messages.list(chat.id)).find((m) => m.role === 'assistant')!.report as { confidence: string; claims: { id: string; verdict: string; matched: string; explanation: string; support: string }[] };
+  };
+
+  it('verifies the observed comparison against both records, and keeps high confidence', async () => {
+    const r = await ask('Compared with BM-RUN-0001, BM-RUN-0016 at 456 s has a lower power margin, a higher core temperature, and a degraded overall health state (DAQ quality is slightly higher).');
+    expect(r.claims.map((c) => c.verdict)).toEqual(['supported', 'supported', 'supported']);
+    expect(r.claims[2]).toMatchObject({ matched: 'record', support: expect.stringContaining('run_id = BM-RUN-0016; mission_elapsed_s = 456') });
+    expect(r.claims[2].explanation).not.toContain('does not appear');
+    expect(r.confidence).toBe('high');
+  });
+
+  it('contradicts a reversed comparison even when the checker says supported', async () => {
+    const r = await ask('Compared with BM-RUN-0016, BM-RUN-0001 at 456 s has a lower power margin and a higher core temperature.');
+    expect(r.claims[2]).toMatchObject({ verdict: 'contradicted', explanation: expect.stringContaining('BM-RUN-0001 pwr_margin_pu = 0.7515 is not lower than BM-RUN-0016 pwr_margin_pu = 0.2751') });
+    expect(r.confidence).toBe('low');
+  });
+
+  it('does not let a comparison cite only one of the runs it compares', async () => {
+    const model = new ScriptedModel({ title: ['{"title":"BM Run Comparison"}'], planner: [plan], verifier: [verified],
+      reporter: [JSON.stringify({ ...JSON.parse(answer('')), claims: [{ id: 'C1', text: 'Compared with BM-RUN-0001, BM-RUN-0016 at 456 s has a lower power margin.', evidence: ['E1'], quote: 'pwr_margin_pu = 0.7515' }] })] });
+    const run = await runner(model).start(chat, user, mission, question);
+    await settle(run.id);
+    const r = (await store.messages.list(chat.id)).find((m) => m.role === 'assistant')!.report as { claims: { verdict: string; explanation: string }[] };
+    expect(r.claims[0]).toMatchObject({ verdict: 'insufficient', explanation: expect.stringContaining('BM-RUN-0016 is not in the cited evidence (E1)') });
+  });
+});
