@@ -390,3 +390,10 @@ ul.tight { margin: 4px 0; padding-left: 18px; font-size: 13px; }
 .faults-grid label { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 13.5px; }
 .switch { display: inline-flex; align-items: center; gap: 8px; font-weight: 700; cursor: pointer; }
 .switch input { width: 18px; height: 18px; }
+
+/* Layout guard: grid tracks may shrink below their content */
+.thread, .turn, .answer, .agent-msg { grid-template-columns: minmax(0, 1fr); }
+.thread > *, .turn > *, .answer > *, .agent-msg > * { min-width: 0; }
+.answer, .msg, .bubble, .user-msg, .task-note, .hyp-text, .task-purpose { overflow-wrap: anywhere; }
+.answer pre, .json { max-width: 100%; overflow-x: auto; }
+.answer table { display: block; max-width: 100%; overflow-x: auto; }

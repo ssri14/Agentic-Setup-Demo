@@ -190,7 +190,7 @@ The superuser chooses provider and model per agent role (planner, verifier, anal
 
 **Ports**: `INFLUX_PORT`, `NEO4J_HTTP_PORT`, `NEO4J_BOLT_PORT`, `MONGO_PORT`, `QDRANT_PORT`, `DASHBOARD_PORT`, `AGENT_PORT`, `MONGO_VIEWER_PORT`, `INFLUX_EXPLORER_PORT`. Change one if it clashes with something already on the host.
 
-**Images**: `IMAGE_NAMESPACE` (default `ssri14`) and `IMAGE_TAG` (default `1.0.0`).
+**Images**: `IMAGE_NAMESPACE` (default `ssri14`) and `IMAGE_TAG` (default `1.0.1`).
 
 ## Day-to-day operations
 
