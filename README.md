@@ -109,3 +109,7 @@ Tags: `1.0.10` (current), earlier versions, and `latest`, for `linux/amd64` and 
 - **Generated artifacts**: rendered pages, extraction reports and model caches.
 
 The generator's source code is public, so anyone reading it can work out which scenario each run contains. That is deliberate for a teaching demonstration: what matters is that the **agent** never sees it, because its tools read only the ingested stores. For a blind benchmark, keep the generator private or re-map the run IDs.
+
+## License
+
+Copyright 2026 Saurabh Srivastava. Licensed under the [Apache License, Version 2.0](LICENSE); see also [NOTICE](NOTICE). This covers the code, the documentation and the fictional Brahmastra dataset and document.

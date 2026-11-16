@@ -1,0 +1,10 @@
+Agentic Setup Demo — Mission Analysis Agent
+Copyright 2026 Saurabh Srivastava
+
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+This repository includes the fictional Brahmastra dataset (synthetic telemetry and the
+Brahmastra Technical Reference). It is non-operational and describes no real system.
+
+Third-party components (Python and npm packages, and container base images) are used under
+their own licences and are not redistributed in this repository.
