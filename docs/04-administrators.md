@@ -106,7 +106,7 @@ The agent uses five model **roles**:
 
 For each role, choose a **Provider** and a **Model**, then **Save**. New questions use the new settings; questions already running keep theirs. Providers appear only when their keys are set in `.env` ([Guide 1](01-infrastructure.md#configuration-reference)):
 
-- **LAN** (`LLM_BASE_URL`): any OpenAI-compatible server. In the reference setup this is `openai/gpt-oss-120b` inside the lab.
+- **LAN** (`LLM_BASE_URL`): any OpenAI-compatible server. In the reference setup this is `openai/gpt-oss-120b` on a self-hosted server.
 - **OpenRouter** and **Groq**: hosted services. **Prompts include mission content** (document passages, telemetry excerpts), and the page warns when a hosted provider is selected. Use them only where that is acceptable.
 
 Reasonable choices:

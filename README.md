@@ -31,7 +31,7 @@ flowchart LR
   U((Users)) --> W[Mission Analysis Agent :8095]
   W -->|10 read-only tools| I & M & Q & N
   W -->|model-written Python| S[analysis sandbox<br/>no network]
-  W -->|planner, verifier, analyst, reporter| L[LLM: LAN gpt-oss-120b / OpenRouter / Groq]
+  W -->|planner, verifier, analyst, reporter| L[LLM: self-hosted / OpenRouter / Groq]
 ```
 
 ## The agent in one paragraph
@@ -58,13 +58,15 @@ A **reporter** drafts the answer: each factual claim with the evidence it rests 
 
 ## Quick start
 
-Requires Docker with Compose v2 (8 GB memory for Docker), Python 3 and Git. Full details: [Guide 1](docs/01-infrastructure.md).
+**New here? Follow the [Installation guide](docs/00-installation.md).** It goes step by step from installing Docker to your first answer, with a check after every step, the five benchmark questions and their expected answers.
+
+The short version, for people who already have Docker with Compose v2 (8 GB memory for Docker), Python 3 and Git:
 
 ```bash
 git clone https://github.com/ssri14/Agentic-Setup-Demo.git
 cd Agentic-Setup-Demo/data-ingestion
 python3 scripts/setup.py                                   # creates .env and secrets/ (never committed)
-# edit .env: LLM_BASE_URL / LLM_MODEL (or OPENROUTER_API_KEY / GROQ_API_KEY)
+# edit .env: set OPENROUTER_API_KEY, GROQ_API_KEY or LLM_BASE_URL (+ LLM_MODEL)
 docker compose pull dashboard agent-web analysis-sandbox influxdb mongo neo4j qdrant
 docker compose up -d influxdb neo4j mongo qdrant
 docker compose run --rm ingest init
@@ -81,6 +83,7 @@ Then:
 
 ## Guides
 
+0. [Installation guide](docs/00-installation.md): **start here**. From a clean machine to a working agent: Docker, configuration, language model, health checks, telemetry, the PDF, accounts, first questions
 1. [Setting up the infrastructure with Docker Compose](docs/01-infrastructure.md): services, requirements, published images or local builds, configuration, operations, backups, publishing images
 2. [Generating and ingesting telemetry](docs/02-telemetry.md): the dataset, generation, validation, ground-truth separation, loading and checking
 3. [Chunking and ingesting a document](docs/03-documents.md): sections, chunks, tables, figures, VLM enrichment, embeddings, the knowledge graph, new missions
@@ -104,3 +107,5 @@ Tags: `1.0.10` (current), earlier versions, and `latest`, for `linux/amd64` and 
 - **Credentials**: `.env` and `secrets/` are generated per machine by `setup.py`.
 - **Evaluator ground truth**: `telemetry-generator/evaluator_only/` holds the run-to-scenario answers. It is created locally by the generator and never committed or ingested.
 - **Generated artifacts**: rendered pages, extraction reports and model caches.
+
+The generator's source code is public, so anyone reading it can work out which scenario each run contains. That is deliberate for a teaching demonstration: what matters is that the **agent** never sees it, because its tools read only the ingested stores. For a blind benchmark, keep the generator private or re-map the run IDs.

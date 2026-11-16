@@ -124,7 +124,7 @@ docker compose run --rm ingest --mission trishul documents --file "Trishul Manua
 **Configuring the VLM** in `data-ingestion/.env` (then `docker compose up -d dashboard`):
 
 ```dotenv
-VLM_BASE_URL=http://10.20.30.57:8002/v1          # any OpenAI-compatible vision endpoint, including /v1
+VLM_BASE_URL=http://my-gpu-server:8002/v1        # any OpenAI-compatible vision endpoint, including /v1
 VLM_MODEL=nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16
 VLM_API_KEY=                                      # if the endpoint needs one
 VLM_TIMEOUT=120

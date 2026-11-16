@@ -13,7 +13,7 @@
       "embedding_revision": "c9745ed1d9f207416be6d2e6f8de32d1f16199bf",
       "enrich": true,
       "vlm_model": "nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16",
-      "vlm_base_url": "http://10.20.30.57:8002/v1",
+      "vlm_base_url": "http://vlm.example.internal:8002/v1",
       "vlm_prompt_sha256": "0e9122dbecf8c0ed8475e1825d27922cb552c1733506280d886a5e5ae3cb8145",
       "similarity_threshold": 0.65,
       "similarity_top_k": 5,

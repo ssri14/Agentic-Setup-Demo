@@ -220,11 +220,8 @@ The Mission Document (`missions/brahmastra/documents/Mission Document.pdf`, Draf
 - [Qdrant payload indexes](https://qdrant.tech/documentation/manage-data/indexing/)
 - [Local embedding model](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2)
 
-## Local model endpoints configured for this workspace
+## Model endpoints
 
-- Vision: `http://10.20.30.57:8002/v1`, model `nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16`.
-- Text LLM (used by the agent; ingestion only checks it is reachable): `http://10.20.30.57:8000/v1`, model `openai/gpt-oss-120b`.
-
-Both model IDs were discovered through their `/models` endpoints. Other machines must be able to reach this LAN host or replace these values in `.env`. The embedding model runs locally in the ingestion container and is independent of these endpoints.
+The reference setup used two self-hosted OpenAI-compatible servers: `nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16` for vision (optional, **Ingest + VLM**) and `openai/gpt-oss-120b` as the agent's text model (ingestion only checks that it is reachable). Set your own endpoints, or hosted providers, in `.env`; see [`../docs/00-installation.md`](../docs/00-installation.md#step-4-choose-a-language-model). The embedding model runs locally in the ingestion container and is independent of these endpoints.
 
 For a slow first build on Apple Silicon, the optional `python3 scripts/cache_linux_wheels.py` command downloads primary Linux ARM64 wheels concurrently, validates their official PyPI SHA-256 hashes, and places them in ignored `_wheels/`. Docker consumes this cache through a build-only mount; it is not copied into the resulting image. Other architectures skip incompatible wheels and fetch the correct packages normally. Keep `_wheels/.gitkeep` when copying the project; the wheel files themselves are optional.

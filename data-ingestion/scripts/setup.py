@@ -14,26 +14,38 @@ args = p.parse_args()
 (root / 'missions').mkdir(exist_ok=True)
 env = root / '.env'
 if not env.exists():
-    text = (root / '.env.example').read_text()
-    text = text.replace('NEO4J_PASSWORD=\n', 'NEO4J_PASSWORD=' + secrets.token_hex(24) + '\n')
-    text = text.replace('MONGO_PASSWORD=\n', 'MONGO_PASSWORD=' + secrets.token_hex(24) + '\n')
-    env.write_text(text)
+    env.write_text((root / '.env.example').read_text())
     env.chmod(0o600)
 token = root / 'secrets/influx-admin.json'
 if not token.exists():
     token.write_text(json.dumps({'token': 'apiv3_' + secrets.token_urlsafe(48), 'name': 'ingestion-admin'}))
     token.chmod(0o600)
-# Browser-viewer credentials are appended to an existing .env without touching other values.
-current = env.read_text()
-additions = [f'{k}={secrets.token_hex(n)}' for k, n in [('VIEWER_PASSWORD', 12), ('VIEWER_SESSION_SECRET', 32)] if f'\n{k}=' not in '\n' + current]
-if additions:
-    env.write_text(current.rstrip('\n') + '\n\n# Read-only browser viewers (mongo-express login user: viewer)\n' + '\n'.join(additions) + '\n')
+
+
+def fill(generated, heading):
+    """Give each key a value: fill it in where .env has it empty, append it where it is missing. Never change a set value."""
+    lines = env.read_text().splitlines()
+    present = {line.split('=', 1)[0]: i for i, line in enumerate(lines) if '=' in line and not line.lstrip().startswith('#')}
+    appended = []
+    for key, value in generated:
+        if key in present:
+            if lines[present[key]].split('=', 1)[1].strip() == '':
+                lines[present[key]] = f'{key}={value}'
+        else:
+            appended.append(f'{key}={value}')
+    text = '\n'.join(lines).rstrip('\n') + '\n'
+    if appended:
+        text += f'\n# {heading}\n' + '\n'.join(appended) + '\n'
+    env.write_text(text)
+
+
+# Store credentials (the stores keep the values they were created with: never rotate them here).
+fill([('NEO4J_PASSWORD', secrets.token_hex(24)), ('MONGO_PASSWORD', secrets.token_hex(24))], 'Store credentials')
+# Read-only browser viewers (mongo-express login user: viewer).
+fill([('VIEWER_PASSWORD', secrets.token_hex(12)), ('VIEWER_SESSION_SECRET', secrets.token_hex(32))], 'Read-only browser viewers (mongo-express login user: viewer)')
 # Mission Analysis Agent: its own MongoDB user and the first superuser's initial password.
-current = env.read_text()
-agent = [(k, v) for k, v in [('AGENT_MONGO_PASSWORD', secrets.token_hex(24)), ('AGENT_ADMIN_USER', 'admin'),
-    ('AGENT_ADMIN_PASSWORD', secrets.token_urlsafe(12)), ('INFLUX_TOKEN', json.loads(token.read_text())['token'])] if f'\n{k}=' not in '\n' + current]
-if agent:
-    env.write_text(current.rstrip('\n') + '\n\n# Mission Analysis Agent (the admin password must be changed at first sign-in)\n' + '\n'.join(f'{k}={v}' for k, v in agent) + '\n')
+fill([('AGENT_MONGO_PASSWORD', secrets.token_hex(24)), ('AGENT_ADMIN_USER', 'admin'), ('AGENT_ADMIN_PASSWORD', secrets.token_urlsafe(12)),
+      ('INFLUX_TOKEN', json.loads(token.read_text())['token'])], 'Mission Analysis Agent (the admin password must be changed at first sign-in)')
 values = dict(line.split('=', 1) for line in env.read_text().splitlines() if '=' in line and not line.lstrip().startswith('#'))
 explorer = root / 'secrets/explorer'
 explorer.mkdir(exist_ok=True)

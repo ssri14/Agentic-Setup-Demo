@@ -1,5 +1,7 @@
 # 1. Setting up the infrastructure with Docker Compose
 
+> First installation? The [Installation guide](00-installation.md) walks through everything below in order, with checks. This guide is the reference for the infrastructure.
+
 This guide takes a machine from nothing to a running stack: four data stores, the ingestion dashboard, the analysis sandbox and the Mission Analysis Agent web app. The steps are the same on macOS, Linux and Windows (Docker Desktop with Linux containers).
 
 - [What runs](#what-runs)
@@ -58,7 +60,7 @@ Named volumes hold the data: `influx_data`, `mongo_data`, `neo4j_data`, `qdrant_
 - **Python 3.9+** on the host, only to run `scripts/setup.py` (standard library only) and, optionally, the telemetry generator.
 - **Git**, to clone the repository.
 - **Network access** on first start: Docker Hub (images) and Hugging Face (the 90 MB embedding model `sentence-transformers/all-MiniLM-L6-v2`, downloaded once into the `model_cache` volume).
-- **A language model** for the agent: an OpenAI-compatible endpoint. The reference setup uses `openai/gpt-oss-120b` on a LAN server; OpenRouter or Groq keys work too. Optional: a vision model (VLM) for document enrichment.
+- **A language model** for the agent: an OpenAI-compatible endpoint. The reference setup uses `openai/gpt-oss-120b` on a self-hosted server; OpenRouter or Groq keys work too ([Installation guide, step 4](00-installation.md#step-4-choose-a-language-model)). Optional: a vision model (VLM) for document enrichment.
 
 ## Install
 
@@ -81,7 +83,7 @@ Running it again is safe: it keeps every existing value and only adds missing on
 Now open `.env` and set the language model (see [Configuration reference](#configuration-reference)):
 
 ```dotenv
-LLM_BASE_URL=http://10.20.30.57:8000/v1     # your OpenAI-compatible server, including /v1
+LLM_BASE_URL=http://my-gpu-server:8000/v1   # your OpenAI-compatible server, including /v1
 LLM_MODEL=openai/gpt-oss-120b
 LLM_API_KEY=                                 # empty if the server needs no key
 # and/or
@@ -180,7 +182,7 @@ The superuser chooses provider and model per agent role (planner, verifier, anal
 
 | Key | Default | Meaning |
 |---|---|---|
-| `VLM_BASE_URL`, `VLM_MODEL`, `VLM_API_KEY`, `VLM_TIMEOUT` | LAN Nemotron | Vision model for **Ingest + VLM** |
+| `VLM_BASE_URL`, `VLM_MODEL`, `VLM_API_KEY`, `VLM_TIMEOUT` | empty (off) | Vision model for **Ingest + VLM** |
 | `EMBEDDING_MODEL`, `EMBEDDING_REVISION` | MiniLM-L6-v2, pinned | Local embedding model. Changing it needs new stores (see Guide 3) |
 | `CHUNK_CHARS` | 1800 | Target chunk size |
 | `SIMILARITY_THRESHOLD`, `SIMILARITY_TOP_K`, `KEYWORD_MIN_SHARED` | 0.65, 5, 2 | Density of related-section links in the graph |

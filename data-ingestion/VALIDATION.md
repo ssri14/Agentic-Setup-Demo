@@ -45,12 +45,14 @@ The Draft 1.0 Mission Document is the final reference version for this demo. It 
 
 ## Inspectable records
 
-- [Cross-store counts and graph links](artifacts/verification.json)
-- [Final container test results](artifacts/container-tests.log)
-- [Real semantic search results](artifacts/search-example.json)
-- [Section traversal from the search hit](artifacts/section-example.json)
-- [Enriched extraction report](artifacts/195b58ef99ca0082b89f78904c6f2435e2855f43668bcf7336048b78e9d44854/extraction.json)
-- [Container-to-VLM table probe](artifacts/container-vlm-probe.log)
-- [Final image build](artifacts/build.log)
+These files are written into `data-ingestion/artifacts/` when you run the ingestion and its tests on your machine; they are not part of the repository.
+
+- Cross-store counts and graph links: `artifacts/verification.json`
+- Final container test results: `artifacts/container-tests.log`
+- Real semantic search results: `artifacts/search-example.json`
+- Section traversal from the search hit: `artifacts/section-example.json`
+- Enriched extraction report: `artifacts/195b58ef99ca0082b89f78904c6f2435e2855f43668bcf7336048b78e9d44854/extraction.json`
+- Container-to-VLM table probe: `artifacts/container-vlm-probe.log`
+- Final image build: `artifacts/build.log`
 
 See [README.md](README.md) for setup, ingestion, retrieval, model configuration and stop/restart commands.

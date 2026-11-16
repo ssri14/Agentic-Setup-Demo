@@ -1,5 +1,15 @@
 # Changelog
 
+## Repository update — 2026-11-16 (share-ready; images unchanged at 1.0.10)
+
+Prepares the repository to be made public. No application code changes: the published `1.0.10` images remain current.
+
+- **Installation guide** ([`docs/00-installation.md`](docs/00-installation.md)): from installing Docker (macOS, Windows/WSL 2, Linux) to the first answer, with a check after every step: choosing a language model (OpenRouter, Groq, a self-hosted server, or Ollama), configuration, images, starting the stack, the health of every component, telemetry (bundled or regenerated), the Mission Document, the administrator, models and user accounts, the five benchmark questions with expected answers, negative controls, everyday operations and troubleshooting. The README and Guide 1 point to it.
+- **Fix: fresh installations.** On a fresh checkout `scripts/setup.py` left `VIEWER_PASSWORD`, `VIEWER_SESSION_SECRET`, `AGENT_MONGO_PASSWORD` and `AGENT_ADMIN_PASSWORD` empty, because `.env.example` lists them without values; `docker compose up` then refused to start. It now fills empty keys and appends missing ones, never changing a value already set. Three host tests (`data-ingestion/tests/test_setup.py`).
+- **Sanitation.** The reference setup's private network addresses are removed from `.env.example`, the docs and a test fixture; a new `.env` starts with no model endpoint configured (`LLM_BASE_URL` and `VLM_BASE_URL` empty) instead of pointing at an unreachable host. `.gitignore` also excludes token and key files. Links in `data-ingestion/VALIDATION.md` to locally generated artifacts are marked as such.
+- **Compose.** `agent-web` can reach a model server on the same machine as `host.docker.internal` on Linux too (`extra_hosts`), as the dashboard already could.
+- The README notes that the public generator reveals which scenario each run contains (by design for teaching; the agent never sees it).
+
 ## 1.0.10 — 2026-11-15 (final demonstration release)
 
 Implements the three items of the final patch brief, after Tests D and E of the five benchmark queries. The checker is not weakened, budgets are unchanged, and the telemetry, documents, ingestion, schemas, sandbox, tools and model endpoints are untouched.

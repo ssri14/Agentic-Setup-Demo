@@ -131,6 +131,8 @@ services:
       AGENT_MAX_MINUTES: ${AGENT_MAX_MINUTES:-15}
       AGENT_MAX_RETRIES: ${AGENT_MAX_RETRIES:-2}
     ports: ["127.0.0.1:${AGENT_PORT:-8095}:8095"]
+    # Lets LLM_BASE_URL point at a model server on this machine (http://host.docker.internal:<port>/v1), also on Linux.
+    extra_hosts: ["host.docker.internal:host-gateway"]
     networks: [default, sandbox]
     depends_on:
       mongo: {condition: service_healthy}
