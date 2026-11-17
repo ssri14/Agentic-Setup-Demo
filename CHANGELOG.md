@@ -1,5 +1,11 @@
 # Changelog
 
+## Telemetry replay — 2026-11-17 (images unchanged at 1.0.10)
+
+- **New: [`telemetry-replay/`](telemetry-replay/README.md).** A plain replay of any recorded run, for showing the raw data before the agent: up to five channels (PIDs) at 0.5×–100×, with play, pause, seek, a scrolling time window and the logged events. Samples are paced by their own mission time, so lost samples arrive as a visible gap. Standard-library Python 3.9+, no packages or stores; a browser UI (Server-Sent Events, canvas charts, works offline) and a terminal mode (`--console`). Preset links (`?run=&pids=&speed=&start=&window=`) open a ready view for a slide.
+- Optional Compose service `telemetry-replay` (profile `replay`, port 8070): the same script in the stock `python:3.12-slim` image, read-only and unprivileged, with the run folders mounted read-only. No new image to publish.
+- 11 tests on the bundled runs (`python3 -m unittest test_replay.py`). The README, the installation guide (step 13) and Guide 1 point to it.
+
 ## Repository update — 2026-11-16 (share-ready; images unchanged at 1.0.10)
 
 Prepares the repository to be made public. No application code changes: the published `1.0.10` images remain current.

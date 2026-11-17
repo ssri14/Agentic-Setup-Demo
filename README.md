@@ -2,7 +2,7 @@
 
 An end-to-end demonstration of an **agentic AI system for mission data analysis**, built around *Brahmastra*, a fictional missile health-monitoring dataset. It covers:
 
-- generating and validating synthetic telemetry;
+- generating and validating synthetic telemetry, and replaying it as if live;
 - ingesting it with technical documents into four specialised stores;
 - a multi-user web application in which a **Plan → Execute → Verify → Recover → Replan** agent investigates questions, cites its evidence, and lets you replay every step.
 
@@ -13,6 +13,7 @@ An end-to-end demonstration of an **agentic AI system for mission data analysis*
 | Folder | Contents |
 |---|---|
 | [`telemetry-generator/`](telemetry-generator) | Deterministic generator (Python/NumPy) for 24 runs × 48 channels × 900 s, its source registry, and an independent 62-check validator |
+| [`telemetry-replay/`](telemetry-replay) | A plain replay of any run: up to five channels at 0.5×–100×, with play, pause and seek. Standard-library Python; no stores needed. The "before" picture to the agent's "after" |
 | [`data-ingestion/`](data-ingestion) | Docker Compose stack, ingestion pipeline and CLI (PyMuPDF, local embeddings, optional VLM), ingestion dashboard, store viewers, and the Brahmastra inputs (Mission Document + 24 runs) |
 | [`mission-analysis-agent/`](mission-analysis-agent) | The web app (React + Fastify + LangGraph.js, TypeScript) and the analysis sandbox (Python) |
 | [`docs/`](docs) | The guides below |
@@ -90,7 +91,7 @@ Then:
 4. [Guide for administrators](docs/04-administrators.md): users and access, models, tool bench, budgets and recovery, fault injection, security
 5. [Guide for users](docs/05-users.md): asking questions, reading answers and evidence, the replay
 
-Technical references: [`data-ingestion/README.md`](data-ingestion/README.md), [`mission-analysis-agent/README.md`](mission-analysis-agent/README.md), [`telemetry-generator/README.md`](telemetry-generator/README.md), [`data-ingestion/viewers/README.md`](data-ingestion/viewers/README.md).
+Technical references: [`telemetry-replay/README.md`](telemetry-replay/README.md), [`data-ingestion/README.md`](data-ingestion/README.md), [`mission-analysis-agent/README.md`](mission-analysis-agent/README.md), [`telemetry-generator/README.md`](telemetry-generator/README.md), [`data-ingestion/viewers/README.md`](data-ingestion/viewers/README.md).
 
 ## Container images
 

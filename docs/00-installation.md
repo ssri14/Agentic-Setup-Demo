@@ -486,6 +486,17 @@ Two **negative controls** show that the agent refuses wrong premises rather than
 
 ## Step 13. Replay and explore
 
+**See the raw telemetry first.** Before asking the agent, you can watch any run as plain telemetry, with no AI involved. It needs only Python, not the stack:
+
+```bash
+python3 ../telemetry-replay/replay.py      # from data-ingestion/; open http://localhost:8070
+```
+
+Or, with the stack running, `docker compose --profile replay up -d telemetry-replay`. Pick up to five channels, a speed, and press **Play**. BM-RUN-0016 between 300 and 460 s shows the cascade behind question E; BM-RUN-0010 around 320–347 s shows the data loss behind question D. See [`telemetry-replay/README.md`](../telemetry-replay/README.md).
+
+**Then replay the agent's work.**
+
+
 - **Replay graph** on any answer steps through the run: the agent graph, the plan as it evolved (including recoveries), every model call with its exact prompt (**See context**), and every tool result. Speeds 0.5×–4×.
 - **Evidence chips** (E1, E2 …) open the cited document passage, table or telemetry excerpt.
 - **Follow-up questions** in the same chat can refer to "that run" or "it".

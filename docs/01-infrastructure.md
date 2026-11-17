@@ -31,6 +31,7 @@ All services belong to one Compose project, `brahmastra-ingestion`, defined in [
 | `agent-provision` *(profile `setup`)* | same image | – | One-time: creates the app's least-privilege MongoDB user |
 | `mongo-viewer` *(profile `viewers`)* | `mongo-express:1.0.2` | 8081 | Read-only MongoDB browser |
 | `influx-explorer` *(profile `viewers`)* | `influxdata/influxdb3-ui:1.11.2` | 8888 | InfluxDB 3 Explorer (query mode) |
+| `telemetry-replay` *(profile `replay`)* | `python:3.12-slim` | 8070 | Plain replay of the bundled runs ([`telemetry-replay/`](../telemetry-replay/README.md)); reads the run folders read-only, needs no store |
 
 ```mermaid
 flowchart LR
@@ -126,6 +127,7 @@ Optional browser viewers for the stores (see [`data-ingestion/viewers/README.md`
 
 ```bash
 docker compose --profile viewers up -d                          # mongo-express :8081, InfluxDB Explorer :8888
+docker compose --profile replay up -d telemetry-replay          # optional: plain telemetry replay :8070
 ```
 
 The stack is running but empty. Load data next:
@@ -190,7 +192,7 @@ The superuser chooses provider and model per agent role (planner, verifier, anal
 
 **Credentials** (generated; don't edit once the stores exist): `NEO4J_PASSWORD`, `MONGO_PASSWORD`, `INFLUX_TOKEN`, `VIEWER_PASSWORD`, `VIEWER_SESSION_SECRET`, `AGENT_MONGO_PASSWORD`, `AGENT_ADMIN_USER`, `AGENT_ADMIN_PASSWORD`.
 
-**Ports**: `INFLUX_PORT`, `NEO4J_HTTP_PORT`, `NEO4J_BOLT_PORT`, `MONGO_PORT`, `QDRANT_PORT`, `DASHBOARD_PORT`, `AGENT_PORT`, `MONGO_VIEWER_PORT`, `INFLUX_EXPLORER_PORT`. Change one if it clashes with something already on the host.
+**Ports**: `INFLUX_PORT`, `NEO4J_HTTP_PORT`, `NEO4J_BOLT_PORT`, `MONGO_PORT`, `QDRANT_PORT`, `DASHBOARD_PORT`, `AGENT_PORT`, `MONGO_VIEWER_PORT`, `INFLUX_EXPLORER_PORT`, `REPLAY_PORT` (8070). Change one if it clashes with something already on the host.
 
 **Images**: `IMAGE_NAMESPACE` (default `ssri14`) and `IMAGE_TAG` (default `1.0.10`).
 

@@ -1,0 +1,366 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Telemetry replay · Brahmastra</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M1 11 L5 6 L8 9 L11 3 L15 8' fill='none' stroke='%231f5fbf' stroke-width='2'/%3E%3C/svg%3E">
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --ink: #18202b; --muted: #5d6877; --line: #dde2e8; --grid: #eef1f4;
+    --accent: #1f5fbf; --warn: #b4540a; --warn-bg: #fff3e6;
+    --c1: #1f5fbf; --c2: #c2410c; --c3: #0f766e; --c4: #7c3aed; --c5: #be123c;
+    --event: #8a94a3; --good: #15803d; --caution: #b45309; --bad: #b91c1c; --neutral: #64748b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f141b; --panel: #161d27; --ink: #e6ebf2; --muted: #95a1b2; --line: #263142; --grid: #1d2633;
+      --accent: #6aa5ff; --warn: #ffb067; --warn-bg: #3a2614;
+      --c1: #6aa5ff; --c2: #ff8f5a; --c3: #3fd0bd; --c4: #b794ff; --c5: #ff7096;
+      --event: #6b778a; --good: #4ade80; --caution: #fbbf24; --bad: #f87171; --neutral: #94a3b8;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--ink); }
+  header { display: flex; align-items: baseline; gap: 14px; padding: 14px 22px 6px; flex-wrap: wrap; }
+  header h1 { font-size: 20px; margin: 0; letter-spacing: .2px; }
+  header .note { color: var(--muted); font-size: 13px; }
+  .bar { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: end; padding: 8px 22px 12px; }
+  label.f { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--muted); }
+  select, button { font: inherit; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 7px; padding: 6px 9px; }
+  select:focus-visible, button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  button { cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  .pids { display: flex; gap: 8px; flex-wrap: wrap; }
+  .pids select { max-width: 210px; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
+  .seg button { border: 0; border-radius: 0; border-right: 1px solid var(--line); padding: 6px 10px; }
+  .seg button:last-child { border-right: 0; }
+  .seg button.on { background: var(--accent); color: #fff; }
+  .transport { display: flex; align-items: center; gap: 14px; padding: 4px 22px 10px; }
+  #play { min-width: 96px; font-weight: 600; }
+  #clock { font: 600 28px/1 ui-monospace, "SF Mono", Menlo, Consolas, monospace; min-width: 150px; }
+  #seek { flex: 1; accent-color: var(--accent); }
+  #dur { color: var(--muted); font-variant-numeric: tabular-nums; }
+  #gap { display: none; background: var(--warn-bg); color: var(--warn); border-radius: 6px; padding: 4px 10px; font-weight: 600; font-size: 13px; }
+  main { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 14px; padding: 0 22px 22px; }
+  @media (max-width: 980px) { main { grid-template-columns: 1fr; } }
+  .charts { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+  .chart { padding: 8px 12px 6px; }
+  .chart .top { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+  .chart .name { font-weight: 600; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 14px; }
+  .chart .name small { font-family: system-ui, sans-serif; color: var(--muted); font-weight: 400; margin-left: 6px; }
+  .chart .value { font: 600 22px/1.1 ui-monospace, Menlo, Consolas, monospace; font-variant-numeric: tabular-nums; }
+  .chart .value.stale { opacity: .45; }
+  .chart .value.stale::after { content: ' last'; font: 400 11px system-ui, sans-serif; color: var(--muted); }
+  .chart canvas { width: 100%; height: 120px; display: block; }
+  .empty { padding: 40px; text-align: center; color: var(--muted); }
+  aside { padding: 10px 12px; max-height: calc(100vh - 210px); overflow: auto; position: sticky; top: 10px; }
+  aside h2 { font-size: 14px; margin: 0 0 8px; display: flex; justify-content: space-between; align-items: center; }
+  aside h2 label { font-weight: 400; font-size: 12px; color: var(--muted); display: flex; gap: 5px; align-items: center; }
+  #events { list-style: none; margin: 0; padding: 0; font-size: 13px; }
+  #events li { padding: 6px 0; border-top: 1px solid var(--line); }
+  #events li.new { animation: flash 1.6s ease-out; }
+  @keyframes flash { from { background: color-mix(in srgb, var(--accent) 22%, transparent); } to { background: transparent; } }
+  #events .t { font-family: ui-monospace, Menlo, Consolas, monospace; color: var(--muted); margin-right: 6px; }
+  #events .ty { font-weight: 600; }
+  #events .msg { color: var(--muted); display: block; }
+  footer { color: var(--muted); font-size: 12px; padding: 0 22px 18px; }
+  kbd { border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; font-size: 11px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Telemetry replay</h1>
+  <span class="note">Brahmastra · fictional, synthetic data · recorded runs replayed as if arriving live</span>
+</header>
+
+<div class="bar">
+  <label class="f">Run <select id="run"></select></label>
+  <label class="f">Channels (up to 5) <span class="pids" id="pids"></span></label>
+  <label class="f">Speed <span class="seg" id="speeds"></span></label>
+  <label class="f">Window <select id="window">
+    <option value="30">30 s</option><option value="60" selected>60 s</option><option value="120">2 min</option>
+    <option value="300">5 min</option><option value="full">Whole run</option></select></label>
+</div>
+
+<div class="transport">
+  <button id="play" title="Space">▶ Play</button>
+  <button id="restart" title="Home">⟲ Restart</button>
+  <span id="clock">T+ 00:00.0</span>
+  <input id="seek" type="range" min="0" max="900" step="0.5" value="0" aria-label="Mission elapsed time">
+  <span id="dur">15:00</span>
+  <span id="gap"></span>
+</div>
+
+<main>
+  <section class="charts" id="charts"><div class="card empty">Choose a run and at least one channel.</div></section>
+  <aside class="card">
+    <h2>Events <label><input type="checkbox" id="showEvents" checked> mark on charts</label></h2>
+    <ul id="events"></ul>
+  </aside>
+</main>
+<footer>
+  Keys: <kbd>Space</kbd> play/pause · <kbd>←</kbd>/<kbd>→</kbd> 10 s back/forward · <kbd>1</kbd>–<kbd>8</kbd> speed · <kbd>Home</kbd> restart.
+  Link to a preset: <code>?run=BM-RUN-0016&amp;pids=pwr_margin_pu,thm_core_temp_pu&amp;speed=10&amp;start=300&amp;window=300</code>
+</footer>
+
+<script>
+const SPEEDS = [0.5, 1, 2, 5, 10, 25, 50, 100];
+const MAX_PIDS = 5;
+const $ = (id) => document.getElementById(id);
+const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+const params = new URLSearchParams(location.search);
+
+const S = {
+  runs: [], channels: [], pids: [], speed: Number(params.get('speed')) || 10, window: 60, showEvents: true,
+  es: null, session: null, playing: false, t: 0, duration: 900,
+  times: [], cols: [], events: [], meta: [], seeking: false, lastEventCount: 0,
+};
+
+const fmt = (t) => { const s = Math.max(0, t); const m = Math.floor(s / 60); return `${String(m).padStart(2, '0')}:${(s - m * 60).toFixed(1).padStart(4, '0')}`; };
+const esc = (s) => String(s).replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]);
+// Whole-number counters without decimals, measurements with four.
+const fmtValue = (c, v) => v === null || v === undefined ? '–' : c.kind !== 'numeric' ? v : c.integer ? String(Math.round(v)) : Number(v).toFixed(4);
+// Round axis ticks (1, 2 or 5 times a power of ten) across [lo, hi].
+function niceTicks(lo, hi, n, integer) {
+  let step = Math.pow(10, Math.floor(Math.log10((hi - lo) / n)));
+  for (const m of [1, 2, 5, 10]) if ((hi - lo) / (step * m) <= n) { step *= m; break; }
+  if (integer) step = Math.max(1, Math.round(step));
+  const out = [];
+  for (let v = Math.ceil(lo / step) * step; v <= hi + step * 1e-9; v += step) out.push(Number(v.toFixed(10)));
+  return out;
+}
+// State colours with meaning: nominal green, caution amber, degraded or fault red; other states get the series colours.
+const GOOD = /^(NOMINAL|OK|NORMAL|CONNECTED|LOCKED|DELIVERED|CONFIRMED|READY|ACTIVE|MONITORING|SAFE)$/;
+const CAUTION = /^(WARNING|CAUTION|PENDING|CHECKING|BACKFILLED|DELAYED|UNLOCKED|IDLE)$/;
+const BAD = /^(DEGRADED|FAULT|FAILED|LOST|DISCONNECTED|ERROR|CRITICAL|ABORTED)$/;
+function stateColour(c, s, k) {
+  if (s === 'true' || s === 'false') {
+    const good = /_ok$/.test(c.id) ? s === 'true' : s === 'false';
+    return css(good ? '--good' : /warning|pending/.test(c.id) ? '--caution' : '--bad');
+  }
+  if (GOOD.test(s)) return css('--good');
+  if (CAUTION.test(s)) return css('--caution');
+  if (BAD.test(s)) return css('--bad');
+  const palette = ['--c1', '--c4', '--c3', '--c5', '--c2', '--neutral'];
+  return css(palette[(Math.max(0, (c.states || []).indexOf(s)) + k) % palette.length]);
+}
+const api = (path) => fetch(path).then((r) => r.ok ? r.json() : r.json().then((e) => Promise.reject(new Error(e.error))));
+
+// ------------------------------------------------------------ controls
+function buildSpeeds() {
+  const box = $('speeds'); box.innerHTML = '';
+  SPEEDS.forEach((s) => {
+    const b = document.createElement('button');
+    b.textContent = `${s}×`; b.className = s === S.speed ? 'on' : '';
+    b.onclick = () => setSpeed(s);
+    box.appendChild(b);
+  });
+}
+function setSpeed(s) {
+  S.speed = s; buildSpeeds();
+  if (S.session) control('speed', s);
+}
+function buildPidSelects() {
+  const box = $('pids'); box.innerHTML = '';
+  for (let k = 0; k < MAX_PIDS; k++) {
+    const sel = document.createElement('select');
+    sel.setAttribute('aria-label', `Channel ${k + 1}`);
+    sel.innerHTML = `<option value="">—</option>` + S.channels.map((c) => `<option value="${esc(c.id)}">${esc(c.id)}${c.unit ? ` (${esc(c.unit)})` : ''}</option>`).join('');
+    sel.value = S.pids[k] || '';
+    sel.onchange = () => {
+      S.pids = [...box.querySelectorAll('select')].map((x) => x.value).filter((v, i, a) => v && a.indexOf(v) === i);
+      connect(S.t, !S.playing);
+    };
+    box.appendChild(sel);
+  }
+}
+async function chooseRun(id, keepPids, start = 0) {
+  S.channels = await api(`/api/runs/${id}/channels`);
+  const ids = new Set(S.channels.map((c) => c.id));
+  S.pids = (keepPids || []).filter((p) => ids.has(p)).slice(0, MAX_PIDS);
+  if (!S.pids.length) S.pids = ['pwr_margin_pu', 'thm_core_temp_pu', 'hlt_overall_state'].filter((p) => ids.has(p));
+  buildPidSelects();
+  connect(start, true);
+}
+
+// ------------------------------------------------------------ stream
+function connect(start, paused) {
+  if (S.es) S.es.close();
+  S.session = null; S.times = []; S.cols = []; S.events = []; S.lastEventCount = 0;
+  $('events').innerHTML = '';
+  if (!S.pids.length) { S.meta = []; buildCharts(); return; }
+  const q = new URLSearchParams({ run: $('run').value, pids: S.pids.join(','), speed: S.speed, start, paused: paused ? '1' : '0' });
+  const es = new EventSource(`/api/stream?${q}`);
+  S.es = es;
+  es.addEventListener('hello', (m) => {
+    const h = JSON.parse(m.data);
+    S.session = h.session; S.meta = h.pids; S.duration = h.run.duration_s;
+    $('seek').max = S.duration; $('dur').textContent = fmt(S.duration);
+    buildCharts();
+  });
+  es.addEventListener('tick', (m) => {
+    const d = JSON.parse(m.data);
+    if (d.reset) { S.times = []; S.cols = S.meta.map(() => []); S.events = []; S.lastEventCount = 0; $('events').innerHTML = ''; }
+    for (const r of d.rows) { S.times.push(r[0]); for (let k = 1; k < r.length; k++) (S.cols[k - 1] ||= []).push(r[k]); }
+    if (d.events.length) { S.events.push(...d.events); renderEvents(); }
+    S.t = d.t; S.playing = d.playing;
+    schedule();
+  });
+  es.onerror = () => { /* the browser reconnects by itself only for transient errors; a closed stream is replaced on the next change */ };
+}
+function control(action, value) {
+  return fetch('/api/control', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session: S.session, action, value }) });
+}
+function togglePlay() { if (S.session) control(S.playing ? 'pause' : 'play'); }
+function seekTo(t) { if (S.session) control('seek', Math.max(0, Math.min(S.duration, t))); }
+
+// ------------------------------------------------------------ rendering
+function buildCharts() {
+  const box = $('charts'); box.innerHTML = '';
+  if (!S.meta.length) { box.innerHTML = '<div class="card empty">Choose a run and at least one channel.</div>'; return; }
+  S.meta.forEach((c, k) => {
+    const el = document.createElement('div');
+    el.className = 'card chart';
+    el.innerHTML = `<div class="top"><span class="name" style="color:var(--c${k + 1})">${c.id}<small>${c.subsystem || ''}${c.unit ? ' · ' + c.unit : ''}${c.kind === 'state' ? ' · state' : ''}</small></span><span class="value" id="v${k}">–</span></div><canvas id="cv${k}"></canvas>`;
+    box.appendChild(el);
+  });
+  schedule();
+}
+function renderEvents() {
+  const ul = $('events');
+  for (let i = S.lastEventCount; i < S.events.length; i++) {
+    const e = S.events[i];
+    const li = document.createElement('li');
+    li.className = S.lastEventCount ? 'new' : '';
+    li.innerHTML = `<span class="t">T+${fmt(e.t)}</span><span class="ty">${esc(e.subsystem)} ${esc(e.type)}</span><span class="msg">${esc(e.message)}</span>`;
+    ul.prepend(li);
+  }
+  S.lastEventCount = S.events.length;
+}
+let pending = false;
+function schedule() { if (!pending) { pending = true; requestAnimationFrame(() => { pending = false; draw(); }); } }
+
+function draw() {
+  $('clock').textContent = `T+ ${fmt(S.t)}`;
+  if (!S.seeking) $('seek').value = S.t;
+  $('play').textContent = S.playing ? '❚❚ Pause' : '▶ Play';
+  const lastT = S.times.length ? S.times[S.times.length - 1] : null;
+  const gap = lastT === null ? S.t : S.t - lastT;
+  const g = $('gap');
+  S.stale = gap > 1.0 && S.t < S.duration - 0.5 && S.t > 0;
+  if (S.stale) { g.style.display = 'inline-block'; g.textContent = `No samples for ${gap.toFixed(1)} s`; } else g.style.display = 'none';
+  const W = S.window === 'full' ? S.duration : Number(S.window);
+  const x1 = S.window === 'full' ? S.duration : Math.max(W, S.t), x0 = x1 - W;
+  S.meta.forEach((c, k) => drawChart(k, c, x0, x1));
+}
+
+function setValue(k, c, v) {
+  const el = $(`v${k}`); if (!el) return;
+  el.textContent = fmtValue(c, v);
+  el.classList.toggle('stale', S.stale && v !== null);
+}
+
+function drawChart(k, c, x0, x1) {
+  const cv = $(`cv${k}`); if (!cv) return;
+  const dpr = window.devicePixelRatio || 1, w = cv.clientWidth, h = cv.clientHeight;
+  if (cv.width !== Math.round(w * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
+  const g = cv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, h);
+  const L = 54, R = 8, T = 6, B = 18, pw = w - L - R, ph = h - T - B;
+  const X = (t) => L + (t - x0) / (x1 - x0) * pw;
+  const color = css(`--c${k + 1}`), ink = css('--muted'), grid = css('--grid');
+  g.font = '11px system-ui, sans-serif'; g.fillStyle = ink; g.strokeStyle = grid; g.lineWidth = 1;
+  // time axis
+  const span = x1 - x0, step = [5, 10, 15, 30, 60, 120, 300].find((s) => span / s <= 8) || 600;
+  g.textAlign = 'center';
+  for (let t = Math.ceil(x0 / step) * step; t <= x1; t += step) {
+    const x = X(t); g.beginPath(); g.moveTo(x, T); g.lineTo(x, T + ph); g.stroke();
+    const label = fmt(t).replace(/\.0$/, ''), half = g.measureText(label).width / 2;
+    g.fillText(label, Math.min(Math.max(x, L + half), L + pw - half), h - 4);
+  }
+  // events
+  if (S.showEvents) {
+    g.save(); g.setLineDash([3, 3]); g.strokeStyle = css('--event');
+    for (const e of S.events) if (e.t >= x0 && e.t <= x1) { const x = X(e.t); g.beginPath(); g.moveTo(x, T); g.lineTo(x, T + ph); g.stroke(); }
+    g.restore();
+  }
+  const ts = S.times, vs = S.cols[k] || [];
+  let current = null;
+  for (let i = ts.length - 1; i >= 0; i--) if (ts[i] <= S.t) { current = vs[i]; break; }
+  if (c.kind === 'numeric') {
+    let lo = c.minimum, hi = c.maximum; if (lo === hi) { lo -= 1; hi += 1; } const pad = (hi - lo) * 0.08; lo -= pad; hi += pad;
+    if (c.integer) { lo = Math.min(lo, Math.floor(c.minimum) - 0.25); hi = Math.max(hi, Math.ceil(c.maximum) + 0.25); }
+    const Y = (v) => T + (1 - (v - lo) / (hi - lo)) * ph;
+    g.textAlign = 'right'; g.strokeStyle = grid;
+    for (const v of niceTicks(lo, hi, 4, c.integer)) { const y = Y(v); g.beginPath(); g.moveTo(L, y); g.lineTo(L + pw, y); g.stroke(); g.fillText(String(v), L - 6, y + 4); }
+    g.save(); g.beginPath(); g.rect(L, T, pw, ph); g.clip();
+    g.strokeStyle = color; g.lineWidth = 2; g.lineJoin = 'round'; g.beginPath();
+    let open = false, prev = null;
+    for (let i = 0; i < ts.length; i++) {
+      const t = ts[i], v = vs[i];
+      if (t < x0 - 1 || t > x1) { prev = t; continue; }
+      if (v === null || (prev !== null && t - prev > 0.75)) open = false;   // a gap in the data stays a gap
+      if (v !== null) { const x = X(t), y = Y(v); if (open) g.lineTo(x, y); else g.moveTo(x, y); open = true; }
+      prev = t;
+    }
+    g.stroke(); g.restore();
+    setValue(k, c, current);
+  } else {
+    g.save(); g.beginPath(); g.rect(L, T, pw, ph); g.clip();
+    let i0 = 0;
+    for (let i = 1; i <= ts.length; i++) {
+      if (i === ts.length || vs[i] !== vs[i0] || ts[i] - ts[i - 1] > 0.75) {
+        const a = Math.max(X(ts[i0]), L), b = Math.min(X(i === ts.length || ts[i] - ts[i - 1] > 0.75 ? ts[i - 1] + 0.5 : ts[i]), L + pw);
+        if (b > L && a < L + pw && vs[i0] !== null) {
+          const s = vs[i0], col = stateColour(c, s, k);
+          g.globalAlpha = 0.22; g.fillStyle = col; g.fillRect(a, T + 8, b - a, ph - 16);
+          g.globalAlpha = 1; g.fillStyle = col; g.fillRect(a, T + 8, b - a, 3);
+          if (b - a > g.measureText(s).width + 10) { g.fillStyle = css('--ink'); g.textAlign = 'left'; g.font = '600 12px ui-monospace, Menlo, monospace'; g.fillText(s, a + 5, T + ph / 2 + 5); g.font = '11px system-ui, sans-serif'; }
+        }
+        i0 = i;
+      }
+    }
+    g.restore();
+    setValue(k, c, current);
+  }
+  // now cursor
+  if (S.t >= x0 && S.t <= x1) { g.strokeStyle = css('--ink'); g.globalAlpha = 0.5; g.lineWidth = 1; g.beginPath(); g.moveTo(X(S.t), T); g.lineTo(X(S.t), T + ph); g.stroke(); g.globalAlpha = 1; }
+}
+
+// ------------------------------------------------------------ wiring
+$('play').onclick = togglePlay;
+$('restart').onclick = () => seekTo(0);
+$('seek').oninput = () => { S.seeking = true; $('clock').textContent = `T+ ${fmt(Number($('seek').value))}`; };
+$('seek').onchange = () => { S.seeking = false; seekTo(Number($('seek').value)); };
+$('window').onchange = () => { S.window = $('window').value; schedule(); };
+$('showEvents').onchange = () => { S.showEvents = $('showEvents').checked; schedule(); };
+$('run').onchange = () => chooseRun($('run').value, S.pids);
+window.addEventListener('resize', schedule);
+document.addEventListener('keydown', (e) => {
+  if (e.target.tagName === 'SELECT' || e.target.tagName === 'INPUT' && e.target.type !== 'range') return;
+  if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
+  else if (e.key === 'ArrowLeft') { e.preventDefault(); seekTo(S.t - 10); }
+  else if (e.key === 'ArrowRight') { e.preventDefault(); seekTo(S.t + 10); }
+  else if (e.key === 'Home') seekTo(0);
+  else if (/^[1-8]$/.test(e.key)) setSpeed(SPEEDS[Number(e.key) - 1]);
+});
+
+(async function init() {
+  buildSpeeds();
+  S.runs = await api('/api/runs');
+  $('run').innerHTML = S.runs.map((r) => `<option value="${esc(r.id)}">${esc(r.id)}${r.missing_samples ? ` · ${r.missing_samples} samples missing` : ''}</option>`).join('');
+  const wanted = params.get('run');
+  if (wanted && S.runs.some((r) => r.id === wanted)) $('run').value = wanted;
+  else if (S.runs.some((r) => r.id === 'BM-RUN-0016')) $('run').value = 'BM-RUN-0016';
+  // Presets for a slide or a demo: ?window=300 (30, 60, 120, 300 or full) and ?start=300 (seconds into the run).
+  const win = params.get('window');
+  if (win && [...$('window').options].some((o) => o.value === win)) { S.window = win; $('window').value = win; }
+  const run = S.runs.find((r) => r.id === $('run').value);
+  const start = Math.min(Math.max(Number(params.get('start')) || 0, 0), run ? run.duration_s : 0);
+  await chooseRun($('run').value, (params.get('pids') || '').split(',').filter(Boolean), start);
+})().catch((e) => { $('charts').innerHTML = `<div class="card empty">Could not load runs: ${esc(e.message)}</div>`; });
+</script>
+</body>
+</html>

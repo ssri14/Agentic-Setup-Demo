@@ -164,6 +164,24 @@ services:
       AGENT_MONGO_PASSWORD: ${AGENT_MONGO_PASSWORD:?Run python3 scripts/setup.py first}
     depends_on:
       mongo: {condition: service_healthy}
+  # --- Optional plain telemetry replay of the bundled runs (no stores needed): docker compose --profile replay up -d ---
+  telemetry-replay:
+    image: python:3.12-slim
+    profiles: [replay]
+    working_dir: /app
+    command: ["python", "replay.py", "--host", "0.0.0.0", "--data", "/data"]
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      - ../telemetry-replay:/app:ro
+      - ./missions/brahmastra/telemetry:/data:ro
+    ports: ["127.0.0.1:${REPLAY_PORT:-8070}:8070"]
+    user: "65534:65534"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
   # --- Optional read-only browser viewers: docker compose --profile viewers up -d ---
   mongo-viewer:
     image: mongo-express:1.0.2
